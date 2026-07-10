@@ -107,6 +107,24 @@ The thesis of Aletheia is that debate reduces unsupported claims vs a single-mod
 
 ---
 
+## Local Dev
+
+See [BLUEPRINT.md](BLUEPRINT.md) for phased build order, [DESIGN.md](DESIGN.md)
+for schemas/contracts, [QUESTIONS.md](QUESTIONS.md) for open decisions.
+
+```
+docker compose up -d          # Postgres+pgvector on localhost:55432
+poetry install
+poetry run uvicorn app.main:app --reload
+curl -X POST localhost:8000/debate -H 'Content-Type: application/json' -d '{"claim": "..."}'
+```
+
+Port is `55432`, not the Postgres default — this machine already runs two
+other local Postgres installs plus another project's containerized instance,
+which occupied 5432 and 5433.
+
+---
+
 ## 90-Day Deliverable
 
 A minimal 2-agent debate (advocate + skeptic) over 5 curated scientific claims, using Biolab's PubMed MCP tool for retrieval. Provenance written to pgvector. An evaluation notebook comparing hallucination rate to a single-model baseline, showing the debate loop reduces unsupported claims.
