@@ -11,7 +11,14 @@ CREATE TABLE embeddings (
     content       TEXT NOT NULL,
     created_at    TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX embeddings_vector_idx ON embeddings USING ivfflat (embedding vector_cosine_ops);
+-- No ivfflat index yet, deliberately. Found during Phase 1 (2026-07-13): an ivfflat
+-- index built while this table is empty trains on zero rows and silently returns 0
+-- results on ORDER BY <=> LIMIT queries after data is inserted, even though the
+-- table isn't empty anymore — Postgres's own NOTICE on REINDEX says as much ("ivfflat
+-- index created with little data... Drop the index until the table has more data").
+-- At the scale this project runs at (a 5-claim eval set), sequential scan is fast and
+-- always correct. Add the index back only when a real query is measured to be slow
+-- because of table size, not preemptively.
 
 CREATE TABLE provenance (
     id              SERIAL PRIMARY KEY,
@@ -20,6 +27,9 @@ CREATE TABLE provenance (
     agent           TEXT NOT NULL,
     action          TEXT NOT NULL,
     source_paper_id TEXT,
+    retrieval_id    TEXT,  -- Biolab's audit-trail link, added Q9 (QUESTIONS.md#q9);
+                            -- nullable because not every provenance row (e.g. a
+                            -- "conclude" or "critique" action) comes from a retrieval
     detail          JSONB,
     prompt_version  TEXT,
     timestamp       TIMESTAMPTZ DEFAULT now()

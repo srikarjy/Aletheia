@@ -126,9 +126,29 @@ challenging and synthesis should start? See [Q5](QUESTIONS.md#q5).
 
 ## MCP retrieval contract (Biolab PubMed)
 
-**PROPOSED — not yet confirmed against Biolab's actual tool schema.**
+**VERIFIED 2026-07-13** against the real, running Biolab MCP server — see
+[Q2](QUESTIONS.md#q2) for the full resolution and what the earlier assumption
+below got wrong.
 
-Assumed shape until [Q2](QUESTIONS.md#q2) is resolved:
+```
+tool: search_pubmed  (MCP stdio transport — spawns `python -m biolab.server`)
+
+search_pubmed(query: str, agent_id: str, max_results: int = 5) -> {
+  "query_echo": str,
+  "papers": [
+    { "pmid": str, "retrieval_id": str, "title": str, "abstract": str }
+  ]
+}
+```
+
+`max_results` is hard-capped at 50 server-side. No `authors`/`year`/`journal`
+fields — Biolab deliberately doesn't surface them. `retrieval_id` is per-paper
+and is the value that must land in `provenance.retrieval_id` (see
+[Q9](QUESTIONS.md#q9) — that column doesn't exist yet). Rate limit is a real,
+measured 3 req/sec (unauthenticated NCBI), not a guess.
+
+<details>
+<summary>Original unverified assumption (superseded)</summary>
 
 ```
 biolab.pubmed_search(query: str, max_results: int) -> [
@@ -136,9 +156,11 @@ biolab.pubmed_search(query: str, max_results: int) -> [
 ]
 ```
 
-Do not build Phase 1 retrieval code against this assumption without first
-checking Biolab's actual exposed tool name/schema — this section is a
-placeholder for "what we'd want," not a verified contract.
+Wrong tool name, wrong fields, missing the required `agent_id` param and the
+per-paper `retrieval_id`. Kept here as a record of what "invented, not
+verified" actually costs when checked against reality.
+
+</details>
 
 ---
 

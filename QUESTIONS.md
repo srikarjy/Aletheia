@@ -9,19 +9,6 @@
 
 ---
 
-### Q2 — Biolab MCP tool contract {#q2}
-
-**Status:** OPEN
-**Blocks:** Phase 1
-
-DESIGN.md's MCP contract is invented, not verified. What does Biolab's
-actual PubMed tool expose — search only, or full-text fetch too? What's the
-rate limit? Does it return abstracts or require a second call for full text?
-This has to be checked against the real MCP server before any retrieval code
-is written, or Phase 1 will be built against a fiction.
-
----
-
 ### Q3 — Claim selection criteria for the 5-claim eval set {#q3}
 
 **Status:** OPEN
@@ -155,3 +142,104 @@ a claim gets re-run for debugging. `debate_id` makes grouping explicit and
 independent of wall-clock timing. Confirmed by the user 2026-07-10; no
 constraint surfaced that would make the composite key preferable (i.e.
 re-running a claim is expected, not an edge case).
+
+---
+
+### Q2 — Biolab MCP tool contract {#q2} — DECIDED 2026-07-13
+
+**Decision:** verified against the real, running Biolab MCP server (built and
+tested in the same portfolio, `github.com/srikarjy/biolab-mcp-server`) — not
+inferred from README, and not the shape DESIGN.md guessed.
+
+Real contract:
+
+```
+tool: search_pubmed
+transport: MCP stdio (spawns `python -m biolab.server`, not HTTP/SSE)
+
+input:
+  query: str        # required
+  agent_id: str      # required — Aletheia must pass one, e.g. "aletheia:advocate"
+  max_results: int   # optional, default 5, hard-capped at 50 (raises ValueError outside [1,50])
+
+output:
+  {
+    "query_echo": str,
+    "papers": [
+      { "pmid": str, "retrieval_id": str, "title": str, "abstract": str }
+    ]
+  }
+```
+
+**What DESIGN.md got wrong:** assumed tool name `pubmed_search` (real name is
+`search_pubmed`), assumed `authors`/`year`/`journal` fields (Biolab doesn't
+return them — its schema deliberately keeps only `pmid`/`title`/`abstract` in
+the tool output, with everything else preserved in a raw snapshot server-side,
+not surfaced to callers), and didn't account for the required `agent_id` param
+or the per-paper `retrieval_id` (this is the field Aletheia's `provenance`
+table needs to store — see the new gap this surfaced, tracked as Q9 below).
+
+**Measured, not estimated:** PubMed's underlying rate limit for unauthenticated
+callers is 3 req/sec — this was actually hit (`HTTPError: 429`) during Biolab's
+own test suite, not assumed. Phase 1's retrieval code should not fire
+concurrent/rapid-fire calls without accounting for this.
+
+---
+
+### Q9 — provenance table is missing retrieval_id {#q9} — DECIDED 2026-07-13
+
+**Decision:** added `retrieval_id TEXT` (nullable — not every provenance row
+comes from a retrieval) to `provenance`, both via `ALTER TABLE` on the live
+Postgres instance and in `db/init.sql` for future fresh installs.
+
+**Justification:** found while resolving Q2, not previously flagged anywhere:
+`provenance` (already migrated live in Postgres, Phase 0) had
+`source_paper_id` but no `retrieval_id` column. Biolab's entire premise — the
+reason it exists instead of Aletheia just calling PubMed directly — is that
+`retrieval_id` is the link between "what Aletheia used" and "the exact,
+timestamped, audit-logged retrieval that produced it." Without this column,
+Phase 1 could persist `source_paper_id` but had nowhere to put the value that
+makes the whole cross-project provenance chain real. Verified: real
+`retrieval_id` values from Biolab now land in this column on every Phase 1
+retrieval (`scripts/run_phase1.py`).
+
+---
+
+### Q10 — ivfflat index on embeddings, built empty, silently broken {#q10} — DECIDED 2026-07-13
+
+**Decision:** dropped `embeddings_vector_idx` (the `ivfflat` index from Phase
+0's `db/init.sql`) entirely, from both the live DB and the schema file. Not
+reindexed and kept — removed.
+
+**What happened:** Phase 1's exit criteria requires proving `embeddings` rows
+are "queryable back by similarity." The first real similarity query
+(`SELECT ... ORDER BY embedding <=> $1 LIMIT 3`) returned **zero rows** — no
+error, just silently wrong — despite the table genuinely having 10 rows
+(confirmed by a plain `SELECT count(*)`, which worked fine). Root cause: the
+`ivfflat` index was created in Phase 0's `db/init.sql`, which runs once via
+Postgres's `docker-entrypoint-initdb.d` when the container first starts —
+i.e., before any rows existed. `ivfflat` is a clustering index that trains on
+whatever data is present at build time; trained on zero rows, it produces
+degenerate clusters and can silently return an empty ANN result set even
+after real data is inserted later, without erroring. Confirmed directly:
+running `REINDEX INDEX embeddings_vector_idx` printed Postgres's own notice —
+*"ivfflat index created with little data... This will cause low recall...
+Drop the index until the table has more data."* Disabling the index scan
+(`SET LOCAL enable_indexscan = off`) immediately fixed the query, proving the
+index — not the query, not psycopg, not pgvector's operators — was the cause.
+
+**Justification for dropping instead of just reindexing:** Postgres's own
+hint says exactly this ("drop the index until the table has more data"), and
+at this project's real scale (a 5-claim eval set, tens of rows for the
+foreseeable phases) sequential scan is fast and exact — an approximate index
+buys nothing here and reintroduces the same failure mode after every future
+bulk load unless someone remembers to `REINDEX` each time. Per this project's
+own rule (don't add infrastructure until a real query fails without it): add
+the index back only when a real query is measured to be slow because of table
+size, not preemptively.
+
+**Why this is worth having ready for an interview:** it's a concrete example
+of "index existed, schema looked right, query looked right, and the system
+was still silently wrong" — the kind of failure mode that doesn't show up
+until you actually run a real query against real data, which is this
+project's whole operating discipline.

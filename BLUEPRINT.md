@@ -52,6 +52,25 @@ by similarity.
 
 **Open questions this phase must resolve:** [Q2 — MCP tool contract](QUESTIONS.md#q2)
 
+**Status 2026-07-13 — DONE, verified for real.** `scripts/run_phase1.py` (run with
+`poetry run python scripts/run_phase1.py`) does exactly the exit criteria: real MCP
+call to Biolab returns 5 real PMIDs/titles/abstracts for the hardcoded claim "BRCA1
+mutations increase pancreatic cancer risk"; each is embedded (OpenAI
+`text-embedding-3-small`) and persisted to `embeddings`; a real cosine-similarity
+query against that table returns the correct closest match. Provenance rows also
+written with `retrieval_id` (Q9 migration) alongside `source_paper_id`, closing the
+audit-trail link Biolab's whole premise depends on.
+
+Found and fixed one real bug along the way: the `ivfflat` index on `embeddings`
+(added in Phase 0, before any data existed) trained on zero rows and silently
+returned 0 results on similarity queries even after data was inserted — no error,
+just wrong. Confirmed via Postgres's own `REINDEX` notice ("ivfflat index created
+with little data... low recall... Drop the index until the table has more data").
+Dropped the index entirely rather than just reindexing — at this project's actual
+scale (5-claim eval set), sequential scan is fast and exact; an approximate index is
+premature optimization until a real query is measured to be slow. See `db/init.sql`
+and QUESTIONS.md.
+
 ---
 
 ## Phase 2 — Advocate agent

@@ -9,7 +9,11 @@ readme = "README.md"
 requires-python = "^3.12"
 dependencies = [
     "fastapi (>=0.139.0,<0.140.0)",
-    "uvicorn[standard] (>=0.51.0,<0.52.0)"
+    "uvicorn[standard] (>=0.51.0,<0.52.0)",
+    "openai (>=2.45.0,<3.0.0)",
+    "psycopg[binary] (>=3.3.4,<4.0.0)",
+    "pgvector (>=0.5.0,<0.6.0)",
+    "mcp (>=1.28.1,<2.0.0)"
 ]
 
 
