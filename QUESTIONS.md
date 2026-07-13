@@ -53,21 +53,28 @@ undefined metric into a false conclusion.
 
 ---
 
-### Q5 — Debate loop termination {#q5}
+### Q5 — Debate loop termination {#q5} — DECIDED 2026-07-13
 
-**Status:** OPEN
-**Blocks:** Phase 2, Phase 3
+**Decision:** Fixed pipeline. Advocate → skeptic → synthesizer, exactly one
+pass each, no back-and-forth. `Agent(debate_id, claim, transcript_so_far,
+evidence) -> (new_transcript_rows, agent_output)` needs no "done" signal —
+the orchestrator calls each agent exactly once, in order.
 
-Who decides the skeptic is done challenging and synthesis should start?
-Options:
-- Fixed: advocate → skeptic → synthesizer, exactly one pass each, no back-and-forth
-- Bounded loop: skeptic can force a re-appraisal from advocate, capped at N rounds
-- Convergence check: loop until skeptic raises no new challenge, or cap hits
+**Justification:** no measured evidence exists yet that a single skeptic pass
+leaves real challenges unaddressed — that evidence can only come from Phase
+6's eval data, which doesn't exist until Phase 6 runs. A bounded or
+convergence loop adds real complexity now (round counters, a "done vs new
+challenge" signal, unpredictable latency/cost) against a requirement that
+hasn't been demonstrated. It also directly serves Phase 6: a fixed pipeline
+produces bounded, comparable runs across the 5-claim eval set, whereas a
+variable-length loop makes baseline-vs-debate comparison noisier and
+threatens Q8 (sync vs async `/debate`) sooner than necessary, since a bounded
+3-call pipeline has predictable worst-case latency and an open-ended
+convergence loop doesn't.
 
-**Why this matters:** the agent interface contract in DESIGN.md assumes a
-fixed pipeline. A bounded or convergence loop changes the interface (agents
-need a way to signal "done" vs "here's a new challenge") — this should be
-picked before Phase 2's agent contract is written, not retrofitted after.
+**Revisit trigger:** if Phase 6's eval data shows single-pass debate doesn't
+meaningfully reduce the unsupported-claim rate vs baseline, that's the real,
+measured signal to introduce a bounded/convergence loop — not before.
 
 ---
 
@@ -91,20 +98,22 @@ solve.
 
 ---
 
-### Q7 — Prompt versioning {#q7}
+### Q7 — Prompt versioning {#q7} — DECIDED 2026-07-13
 
-**Status:** OPEN
-**Blocks:** Phase 2
+**Decision:** `prompt_version` is a hash of the actual prompt template text
+at call time (first 12 hex chars of SHA-256), computed automatically in code
+— not a hand-bumped string tag.
 
-DESIGN.md's provenance schema includes a `prompt_version` column. Is that
-enough — a string tag bumped by hand — or does provenance need to store the
-actual prompt text/hash inline, so a provenance row is self-contained and
-interpretable even if the prompt file is later edited or deleted?
-
-**Riskiest assumption:** a human remembers to bump the version string every
-time a prompt changes. If that discipline slips even once, old provenance
-rows become silently misleading — which is exactly the failure mode README's
-commandment #2 ("no silent steps") is meant to prevent.
+**Justification:** the doc's own riskiest-assumption callout was that a human
+has to remember to bump a version string every time a prompt changes, and one
+missed bump makes old provenance rows silently misleading — exactly the
+failure mode README's commandment #2 ("no silent steps") exists to prevent.
+Hashing the template removes the human step entirely: the value in
+`prompt_version` is always accurate because it's derived from the actual text
+that ran, not asserted by someone editing a version number nearby. A
+provenance row stays self-contained and honest even if the prompt file is
+later edited or deleted — the hash on the row is a fact about what actually
+ran, not a claim that has to be trusted.
 
 ---
 

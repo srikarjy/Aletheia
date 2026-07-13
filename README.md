@@ -6,6 +6,26 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 
 ---
 
+## Status (as of 2026-07-13)
+
+**Phase 0 and Phase 1 of 7 are done, both verified for real.** Phase 0: `/debate`
+round-trips a fixture response, `embeddings`/`provenance` tables live in Postgres.
+Phase 1: a real MCP call to [Biolab](https://github.com/srikarjy/biolab-mcp-server)
+retrieves real PubMed papers for a hardcoded claim, each is embedded (OpenAI
+`text-embedding-3-small`) and persisted, and a real cosine-similarity query returns
+the correct match — see `scripts/run_phase1.py`.
+
+**No agents exist yet.** The advocate, skeptic, and synthesizer in the architecture
+diagram below are the target design, not the current state — `/debate` still returns
+a hardcoded fixture for anything beyond what Phase 1's script proved manually. There
+is no debate loop, no eval harness, no comparison against a baseline. Phase 2
+(advocate agent) is next; see [BLUEPRINT.md](BLUEPRINT.md) for the full phase-by-phase
+plan and exit criteria, and [QUESTIONS.md](QUESTIONS.md) for decisions made against
+real data along the way (including two real bugs found and fixed, not hypothetical
+ones).
+
+---
+
 ## The Problem
 
 A single LLM call collapses five distinct cognitive operations into one opaque text artifact:
@@ -122,6 +142,13 @@ curl -X POST localhost:8000/debate -H 'Content-Type: application/json' -d '{"cla
 Port is `55432`, not the Postgres default — this machine already runs two
 other local Postgres installs plus another project's containerized instance,
 which occupied 5432 and 5433.
+
+To run Phase 1's real retrieval pipeline (needs `.env` — copy `.env.example` and fill
+in `OPENAI_API_KEY`, and Biolab checked out as a sibling directory):
+
+```
+PYTHONPATH=. poetry run python scripts/run_phase1.py
+```
 
 ---
 

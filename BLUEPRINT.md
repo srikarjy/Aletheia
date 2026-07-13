@@ -92,6 +92,27 @@ every step the advocate took, in order, each linked to a real `source_paper_id`.
 
 **Open questions this phase must resolve:** [Q5 — agent loop termination](QUESTIONS.md#q5), [Q7 — prompt versioning](QUESTIONS.md#q7)
 
+**Status 2026-07-13 — DONE, verified for real.** `scripts/run_phase2.py` proves the
+exit criteria: for the claim "BRCA1 mutations increase pancreatic cancer risk",
+`app/agents/advocate.py` retrieves real evidence via Biolab, writes one "retrieve"
+provenance row per paper (each with a real `source_paper_id` + `retrieval_id`), then
+calls Claude (`claude-sonnet-4-5`, forced tool-use for structured output) to build an
+evidence-based case, writing one "appraise" row with a real `prompt_version` hash
+(Q7). The case itself is genuinely grounded — it cited 4 of the 5 retrieved papers
+with direct quotes, and correctly did not cite the 5th (an ATM founder-variant paper
+retrieved by the query but not actually about BRCA1), matching the "don't overstate
+weak evidence" instruction in the prompt.
+
+One design call made without a pre-existing question to resolve it against: the
+"appraise" row's `source_paper_id` is `NULL`, by design, not omission — a case
+synthesizes across N papers, and a single-value column can't represent that. Each
+paper is still linked to a real source individually via its own "retrieve" row;
+`detail.cited_pmids` on the appraise row records which of those the case actually
+drew on. See `app/agents/advocate.py`'s module docstring for the full reasoning.
+
+Q5 was decided as fixed pipeline (see QUESTIONS.md#q5) — Phase 2 makes exactly one
+advocate call, no looping, consistent with that decision.
+
 ---
 
 ## Phase 3 — Skeptic agent
