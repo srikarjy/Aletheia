@@ -135,6 +135,29 @@ provenance row proving it happened.
 
 **Open questions this phase must resolve:** [Q5 — agent loop termination](QUESTIONS.md#q5)
 
+**Status 2026-07-13 — DONE, verified for real.** `scripts/run_phase3.py` proves the
+exit criteria well past the minimum bar: the skeptic raised 5 concrete challenges
+(each its own "critique" provenance row) plus one "assess" row, all against the same
+claim used in Phase 1/2. Genuinely substantive, not scripted — it caught the advocate
+conflating BRCA1 with BRCA2's higher risk figures, caught a citation (PMID 42274517)
+that discusses treatment but doesn't actually establish germline BRCA1 pancreatic
+cancer susceptibility, and correctly flagged an irrelevant retrieved paper (ATM
+founder variant, no BRCA1 relevance).
+
+Scoped minimally per this phase's own allowance ("does not re-retrieve... unless it
+needs to") — the skeptic works from the same evidence the advocate already retrieved,
+no new-retrieval capability. No real case yet demonstrates existing evidence is
+insufficient to mount a real challenge, so that capability isn't built until one does.
+
+**Real bug found and fixed:** the skeptic's first live run threw `KeyError:
+'uncertainty_notes'` — Claude's tool_use response was truncated by `max_tokens=1024`
+before finishing the JSON, and a tool schema's `required` fields are a strong hint to
+Claude, not an enforced guarantee. Fixed two ways: raised `max_tokens` to 2048 for
+real-sized evidence blocks, and added `app/llm.py`'s `call_tool()` helper, which
+checks `stop_reason` and raises a clear error at the truncation site instead of
+letting a confusing `KeyError` surface several calls downstream. Now shared by both
+the advocate and skeptic, and will be reused by Phase 4's synthesizer.
+
 ---
 
 ## Phase 4 — Synthesizer agent
