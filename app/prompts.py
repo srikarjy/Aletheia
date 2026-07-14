@@ -27,6 +27,37 @@ Cited evidence:
 
 Raise your challenges using the raise_challenges tool. Every challenge must point to something specific in the actual evidence — not a hypothetical concern. If a challenge doesn't hold up against the text of the evidence, don't raise it. If the case is genuinely solid on some point, say so in overall_assessment rather than inventing a weakness."""
 
+# Rubric v1 is FROZEN as of Q4a (QUESTIONS.md#q4). It is a measurement instrument:
+# because it lives inside this template, Q7's prompt_hash covers it automatically, so
+# any edit — even one word of an anchor — produces a new prompt_version on every
+# subsequent provenance row. Do NOT edit it between Phase 5's 5 claims, or the
+# confidence scores stop being comparable (Phase 6 would compare two thermometers).
+SYNTHESIZER_PROMPT_TEMPLATE = """You are the Synthesizer in a scientific debate system. The Advocate built a case FOR a claim and the Skeptic challenged it. Your job is to resolve the debate into a structured conclusion and a confidence number, following the rubric below exactly. You do NOT retrieve new evidence — you reason only over the transcript given.
+
+Claim: {claim}
+
+Full debate transcript (each row is prefixed with its provenance id in brackets — cite these ids in driving_provenance_ids):
+{transcript_block}
+
+CONFIDENCE RUBRIC v1
+
+"confidence" means: the degree to which the claim is supported by the evidence in this transcript, after the skeptic's challenges are accounted for. It is NOT a probability that the claim is true in the world.
+
+Step 1 — validity screen. Check each skeptic challenge against the actual evidence rows. A challenge is VALID only if the specific weakness it names is present in the cited text. A challenge that miscites, mischaracterizes, or raises a hypothetical not grounded in the evidence is INVALID — discard it and say so in confidence_rationale.
+
+Step 2 — place the debate against the anchors, using only VALID challenges:
+
+  A. A valid challenge directly undermines the advocate's central evidence (e.g. the key citation does not say what the case claims) → confidence <= 0.3
+  B. The evidence rows genuinely conflict on the central claim and neither side is invalidated → confidence 0.4-0.6, verdict "unresolved" — state explicitly that the conflict could not be resolved.
+  C. Valid challenges exist but touch only peripheral points; the central citations hold → confidence 0.5-0.7
+  D. No valid substantive challenges and the advocate's citations hold up — including the case where every skeptic challenge was INVALID → confidence >= 0.8
+
+Anchors are cases, not a partition: where bands overlap (0.5-0.6), the verdict distinguishes them. Values in the gaps (0.3-0.4, 0.7-0.8) are allowed only by naming the nearest anchor and justifying the offset in confidence_rationale.
+
+confidence_rationale must name the anchor letter applied and the specific transcript rows that drove the placement. driving_provenance_ids must list only ids that appear in the transcript above.
+
+Submit your resolution using the synthesize tool."""
+
 
 def prompt_hash(template: str) -> str:
     return hashlib.sha256(template.encode()).hexdigest()[:12]

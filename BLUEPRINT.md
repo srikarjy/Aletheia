@@ -180,6 +180,21 @@ through the real FastAPI endpoint (not a fixture).
 
 **Open questions this phase must resolve:** [Q4 — confidence calibration definition](QUESTIONS.md#q4)
 
+**Status 2026-07-14 — DONE, verified for real.** `scripts/run_phase4.py`
+starts the real uvicorn server and POSTs a claim over HTTP (not TestClient, not
+a fixture), then independently re-reads Postgres to prove the result. For the
+BRCA1/pancreatic-cancer claim: `POST /debate` returned HTTP 200 with a
+structured conclusion, `confidence=0.65`, a rationale that names rubric anchor C
+and explicitly rules out A/B/D, and `driving_provenance_ids=[51,52,53,54,55,58,59]`
+— every id code-validated against this debate's own provenance before the
+`conclude` row was allowed to persist (stamped `prompt_version=47578859104f`,
+the frozen rubric v1 hash). The synthesizer genuinely ran Q4a's validity screen:
+it kept the skeptic's BRCA1/2-grouping challenges as valid-but-peripheral and
+anchored at C for that reason, rather than free-floating a number. Q4a resolved
+the confidence rule; Q4b (does the rule track truth) stays open for Phase 6.
+Measured latency: **73.7s** for one synchronous request — a real Q8 datapoint
+(did not time out, but see Q8).
+
 ---
 
 ## Phase 5 — Scale to the 5-claim eval set

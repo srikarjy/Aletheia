@@ -30,26 +30,112 @@ skeptic role would never have anything real to challenge.
 
 ---
 
-### Q4 — What does "confidence calibration" mean here? {#q4}
+### Q4 — What does "confidence calibration" mean here? {#q4} — SPLIT 2026-07-14
+
+The original question conflated two things that resolve at different phases:
+what **rule** produces the synthesizer's confidence number (blocks Phase 4),
+and whether that rule's outputs **track truth** (blocks Phase 6). Split so
+Phase 4 can proceed without pretending to a statistical validation that one
+claim — or five — cannot provide.
+
+#### Q4a — the rule that produces the number — DECIDED 2026-07-14
+
+**Decision:** the synthesizer's confidence is produced by **rule-constrained
+judgment against a written rubric** (v1 below), embedded verbatim in the
+synthesizer prompt template. The rubric is a fixed set of anchor cases
+mapping evidentiary situations to confidence bands. The structured output
+(same forced-tool-use pattern as Phases 2/3) must include `confidence`, a
+`confidence_rationale` that names the anchor applied and the rows that drove
+it, and `driving_provenance_ids` — and **code validates** that every listed
+ID exists among *this debate's* provenance rows, rejecting/retrying the call
+otherwise. Citation is enforced, not honor-system.
+
+**What this is, stated honestly:** the rubric does not eliminate judgment,
+it relocates it — "does this challenge undermine the *central* evidence?" is
+still a classification the LLM makes. What the rubric buys is
+accountability: the standard is written down in the prompt, so a human can
+check any band assignment against it and disagree with a specific anchor,
+instead of arguing with a free-floating 0.6. At this phase, `confidence:
+0.7` does **not** mean "correct 70% of the time" — it means "band C/D per
+rubric v1." Whether the rubric's numbers track truth is exactly Q4b.
+
+**Rubric v1** (to be embedded verbatim in `SYNTHESIZER_PROMPT_TEMPLATE` in
+Phase 4 — see versioning note below):
+
+```
+CONFIDENCE RUBRIC v1
+
+"confidence" means: the degree to which the claim is supported by the
+evidence in this transcript, after the skeptic's challenges are accounted
+for. It is NOT a probability that the claim is true in the world.
+
+Step 1 — validity screen. Check each skeptic challenge against the actual
+evidence rows. A challenge is VALID only if the specific weakness it names
+is present in the cited text. A challenge that miscites, mischaracterizes,
+or raises a hypothetical not grounded in the evidence is INVALID — discard
+it and say so in confidence_rationale.
+
+Step 2 — place the debate against the anchors, using only VALID challenges:
+
+  A. A valid challenge directly undermines the advocate's central evidence
+     (e.g. the key citation does not say what the case claims)
+     → confidence ≤ 0.3
+  B. The evidence rows genuinely conflict on the central claim and neither
+     side is invalidated → confidence 0.4–0.6, verdict "unresolved" — state
+     explicitly that the conflict could not be resolved.
+  C. Valid challenges exist but touch only peripheral points; the central
+     citations hold → confidence 0.5–0.7
+  D. No valid substantive challenges and the advocate's citations hold up —
+     including the case where every skeptic challenge was INVALID
+     → confidence ≥ 0.8
+
+Anchors are cases, not a partition: where bands overlap (0.5–0.6), the
+verdict distinguishes them. Values in the gaps (0.3–0.4, 0.7–0.8) are
+allowed only by naming the nearest anchor and justifying the offset in
+confidence_rationale.
+
+confidence_rationale must name the anchor letter applied and the specific
+transcript/provenance rows that drove the placement. driving_provenance_ids
+must list only IDs that appear in this debate's provenance.
+```
+
+**Versioning:** the rubric lives inside the synthesizer prompt template, so
+Q7's `prompt_version` hash covers it automatically — any edit, even one
+word of an anchor, produces a new hash on every subsequent provenance row.
+The rubric is a measurement instrument: it must be **frozen before Phase 5
+starts** and not edited between the 5 claims, or the confidence scores stop
+being comparable and Phase 6's table compares readings from two different
+thermometers. A mid-eval hash change in provenance is the tripwire.
+
+**Justification:** Phase 4's exit criterion asks for "a confidence score
+defined by an explicit rule, not vibes" — it never asked for calibration,
+which requires many claims with known outcomes. A written rubric + enforced
+citation of driving rows is that explicit rule: checkable and reproducible,
+just not yet statistically validated. Anchor D's validity screen exists
+because the fixed pipeline (Q5) has no rebuttal turn — without a sanctioned
+way to discard an unsound skeptic challenge, the confidence floor would be
+set by skeptic aggression rather than evidence quality (Phase 3 proved the
+skeptic can be substantive; nothing proves it can't also overreach). Anchor
+B exists because Phase 4's requirement explicitly includes "explicitly fails
+to resolve" as a legitimate outcome, and Q3 plans at least one claim with no
+clean resolution — the rubric must reward an honest "unresolved" over
+fabricated confidence. The deterministic alternative (a formula over
+transcript features, e.g. counting challenges) was rejected: it would be
+gameable, brittle, and would pretend a precision it doesn't have.
+
+#### Q4b — does the rubric's output track truth? {#q4b}
 
 **Status:** OPEN
-**Blocks:** Phase 4, Phase 6
+**Blocks:** Phase 6 (not Phase 4)
 
-Confidence calibration normally means: over many predictions, a stated
-confidence of 0.7 should be correct ~70% of the time. That requires many
-claims with known outcomes — 5 claims is nowhere near enough for a real
-calibration curve. So what is Phase 6 actually going to report?
-
-- A weaker proxy (e.g. "did the synthesizer's confidence go down on the
-  claim we know is contested"), acknowledged as a proxy, not true calibration?
-- Or is the metric name in README aspirational and the real Phase 6 output
-  should be reframed?
-
-**Riskiest assumption:** shipping a "confidence_calibration_error" number in
-the eval output without first deciding what it measures produces a number
-that looks rigorous and isn't. Per Rule 12 (be brutally honest) — resolve
-this before Phase 6, not after, so the eval notebook doesn't launder an
-undefined metric into a false conclusion.
+What Phase 6 reports about confidence must be directional/ordinal at n=5 —
+e.g. "did the known-contested claim receive the lowest confidence" and "did
+the synthesizer use anchor B rather than fabricating certainty" — reported
+as an acknowledged proxy. **Never** a `confidence_calibration_error` scalar:
+at n=5 that number would look rigorous and isn't (Rule 12). The exact
+proxy metric definition is decided together with Q3's claim selection, since
+the check only means something if the eval set contains a claim known to be
+contested.
 
 ---
 
@@ -133,6 +219,13 @@ actual latency in Phase 4. Per README's commandment #1 — don't add this
 infrastructure (job queue, polling endpoint) until a real request actually
 times out. This question stays OPEN and low-priority until Phase 4 produces
 a real latency number; do not pre-solve it in Phase 0.
+
+**Measured 2026-07-14 (Phase 4):** one synchronous `POST /debate` took **73.7s**
+end to end (advocate MCP retrieval + 3 LLM calls: advocate, skeptic, synthesizer).
+It did **not** time out, so per the rule above async stays deferred — but 73s is
+a real signal, not a comfortable one. Revisit trigger stays as written: introduce
+submit-job + poll only when a real request actually times out (or Phase 5's batch
+of 5 makes the sequential wait untenable), not preemptively. Kept OPEN.
 
 ---
 
