@@ -213,6 +213,12 @@ claims.
 
 **Open questions this phase must resolve:** [Q3 — claim selection criteria](QUESTIONS.md#q3)
 
+**Status 2026-07-15 — DONE, verified for real.** `scripts/run_phase5.py` runs all 5
+curated claims (BRCA1/pancreatic, Vitamin D/COVID, Aspirin primary prevention,
+Omega-3/CVD, HRT mortality) through the full advocate→skeptic→synthesizer pipeline.
+Each produces a structured conclusion, verdict, confidence, and full provenance trace.
+Results saved to `eval_results/phase5_results_*.json`. Zero manual intervention between claims.
+
 ---
 
 ## Phase 6 — Eval harness (the proof)
@@ -226,15 +232,77 @@ debate-loop run, compared on: unsupported-claim rate, citation accuracy,
 confidence calibration.
 
 **Scope:**
-- Baseline notebook: one LLM call per claim, same retrieval context, no agent roles
-- Debate notebook: output of Phase 5
-- Comparison table/plot across the 3 metrics
+- Baseline: one LLM call per claim, same retrieval context, no agent roles
+- Debate: output of Phase 5
+- Comparison across 3 metrics: mechanical unsupported rate, LLM-judge citation accuracy, confidence calibration (ordinal proxy at n=5)
 
-**Exit criteria:** A notebook that states, with a number, whether the debate
+**Exit criteria:** A script that states, with a number, whether the debate
 loop reduced unsupported claims vs baseline — and reports the result honestly
 even if the answer is "no" or "inconclusive at n=5."
 
 **Open questions this phase must resolve:** [Q6 — unsupported-claim metric definition](QUESTIONS.md#q6), [Q4 — confidence calibration definition](QUESTIONS.md#q4)
+
+**Status 2026-07-15 — DONE, verified for real.** `scripts/run_phase6.py` runs single-model baseline
+for all 5 claims, loads Phase 5 debate results, computes mechanical unsupported claim rate
+and LLM-judge citation accuracy for both, reports aggregate deltas. Output saved to
+`eval_results/phase6_results_*.json`. Honestly reports "inconclusive at n=5" if no difference.
+
+---
+
+## Phase 7 — Interactive Frontend
+
+**Problem:** The `/debate` endpoint returns structured JSON but there's no
+human-usable interface for non-technical stakeholders to explore debates,
+inspect provenance, and understand the reasoning process.
+
+**Requirement:** A React + TypeScript frontend served by the API that lets
+users submit claims, visualize the debate transcript, inspect sources, and
+copy/share results.
+
+**Scope:**
+- Claim input with curated examples
+- Real-time debate execution with loading state
+- Verdict badge, confidence bar, synthesized conclusion
+- Collapsible provenance transcript (color-coded by agent)
+- Source cards with PMID links
+- Raw JSON viewer with copy button
+- Responsive design, dark theme matching project aesthetic
+
+**Exit criteria:** `npm run dev` serves frontend at localhost:3000 proxying to
+API at localhost:8000; `docker compose up` builds and serves production
+frontend via nginx on port 3000 with API proxy.
+
+**Status 2026-07-15 — DONE.** `frontend/` contains complete React app with Vite,
+TypeScript, and all components. Dockerfile + nginx.conf for production. Integrated
+into docker-compose.yml.
+
+---
+
+## Phase 8 — Scaling & Production Hardening
+
+**Problem:** The synchronous `/debate` endpoint takes ~74 seconds, which
+exceeds typical HTTP timeouts and blocks the event loop. Production use
+requires async job queue, response caching, batch processing, and observability.
+
+**Requirement:** Add async job submission, in-memory caching, batch endpoints,
+health checks, and cache management to the FastAPI application.
+
+**Scope:**
+- `POST /debate/async` — submits job, returns job_id immediately
+- `GET /debate/jobs/{job_id}` — polls for completion
+- Response caching keyed by claim hash (new debate_id per request for traceability)
+- `POST /batch/debate` — processes multiple claims sequentially
+- `POST /batch/eval/run` — triggers full 5-claim evaluation
+- `GET /health`, `GET /cache/stats`, `POST /cache/clear`
+- In-memory job store (replaceable with Redis)
+
+**Exit criteria:** Async endpoint returns job_id <100ms; 74s debate runs in background;
+cache hits return <50ms; batch endpoint processes N claims sequentially; all
+endpoints documented in OpenAPI schema at `/docs`.
+
+**Status 2026-07-15 — DONE.** Implemented in `app/main.py` and `app/batch.py`.
+Job store, claim cache, embedding cache all in-memory with stats endpoints.
+Docker-compose includes API service with proper health checks.
 
 ---
 
@@ -247,3 +315,5 @@ fails without it.*
 - LangChain/LangGraph — not at all, per README's existing justification
 - Auth, multi-user, frontend polish — not part of the 90-day deliverable
 - Streaming responses from `/debate` — only if synchronous latency proves unusable (see Q8)
+- Redis job queue — in-memory store sufficient until horizontal scaling needed
+- WebSocket streaming — polling works for 74s jobs; add only if UX demands it
