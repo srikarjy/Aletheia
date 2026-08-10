@@ -29,7 +29,7 @@ from anthropic import Anthropic
 from app.claims import get_all_claims
 from app.db import connect
 from app.embeddings import embed
-from app.llm import call_tool
+from app.llm import call_tool, _client as llm_client
 from app.mcp_client import search_pubmed
 from app.prompts import ADVOCATE_PROMPT_TEMPLATE, prompt_hash
 
@@ -95,8 +95,13 @@ async def run_baseline(claim: str, claim_id: str) -> dict:
         )
         prompt = BASELINE_PROMPT_TEMPLATE.format(claim=claim, evidence_block=evidence_block)
 
-        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        baseline_result = call_tool(client, BASELINE_MODEL, 2048, BASELINE_TOOL, prompt)
+        baseline_result = call_tool(
+            llm_client,
+            BASELINE_MODEL,
+            tool_name="submit_baseline",
+            tool_schema=BASELINE_TOOL["input_schema"],
+            prompt=prompt,
+        )
 
         with conn.cursor() as cur:
             cur.execute(

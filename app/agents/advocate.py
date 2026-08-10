@@ -19,7 +19,7 @@ import psycopg
 from anthropic import Anthropic
 
 from app.embeddings import embed
-from app.llm import call_tool
+from app.llm import call_tool, _client as llm_client
 from app.mcp_client import search_pubmed
 from app.prompts import ADVOCATE_PROMPT_TEMPLATE, prompt_hash
 
@@ -45,8 +45,6 @@ BUILD_CASE_TOOL = {
         "required": ["case_summary", "cited_pmids"],
     },
 }
-
-_client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 
 async def advocate(conn: psycopg.Connection, claim: str, debate_id: UUID) -> dict:
@@ -87,7 +85,13 @@ async def advocate(conn: psycopg.Connection, claim: str, debate_id: UUID) -> dic
     )
     prompt = ADVOCATE_PROMPT_TEMPLATE.format(claim=claim, evidence_block=evidence_block)
 
-    case = call_tool(_client, MODEL, 2048, BUILD_CASE_TOOL, prompt)
+    case = call_tool(
+        llm_client,
+        MODEL,
+        tool_name="build_case",
+        tool_schema=BUILD_CASE_TOOL["input_schema"],
+        prompt=prompt,
+    )
 
     with conn.cursor() as cur:
         cur.execute(

@@ -9,11 +9,11 @@ so "why 0.4 and not 0.7" is a row you can point at, not buried in the model's he
 
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DebateRequest(BaseModel):
-    claim: str
+    claim: str = Field(..., min_length=1)
 
 
 class TranscriptEntry(BaseModel):

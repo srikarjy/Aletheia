@@ -6,6 +6,7 @@ because Biolab is a separately versioned, separately deployed service.
 Supports MOCK_RETRIEVAL=true for demo/deployment without Biolab dependency.
 """
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -198,10 +199,16 @@ def _get_mock_papers(query: str) -> list[dict[str, Any]]:
         return MOCK_PAPERS["brca1"]
 
 
-async def search_pubmed(query: str, agent_id: str, max_results: int = 5) -> dict:
+async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout: float = 30.0) -> dict:
     """
     Search PubMed via Biolab MCP server, or return mock data if MOCK_RETRIEVAL=true
     or BIOLAB_PROJECT_PATH not set.
+    
+    Args:
+        query: Search query string
+        agent_id: Agent identifier for Biolab audit trail
+        max_results: Maximum number of results (hard-capped at 50 by Biolab)
+        timeout: Timeout in seconds for the MCP call (default 30s)
     """
     # Check for mock mode
     if os.environ.get("MOCK_RETRIEVAL", "").lower() == "true":
@@ -221,7 +228,7 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5) -> dict
         papers = _get_mock_papers(query)[:max_results]
         return {"query_echo": query, "papers": papers}
 
-    # Real Biolab MCP call
+    # Real Biolab MCP call with timeout
     params = StdioServerParameters(
         command=f"{biolab_path}/.venv/bin/python",
         args=["-m", "biolab.server"],
@@ -234,11 +241,19 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5) -> dict
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool(
-                "search_pubmed",
-                {"query": query, "agent_id": agent_id, "max_results": max_results},
+            result = await asyncio.wait_for(
+                session.call_tool(
+                    "search_pubmed",
+                    {"query": query, "agent_id": agent_id, "max_results": max_results},
+                ),
+                timeout=timeout,
             )
             if result.isError:
                 message = result.content[0].text if result.content else "unknown error"
+                if "no PubMed results" in message:
+                    # A real, expected outcome (the query genuinely has no hits), not a
+                    # retrieval failure — Biolab reports it as a tool error, but the
+                    # debate pipeline should reason over "no evidence found," not crash.
+                    return {"query_echo": query, "papers": []}
                 raise RuntimeError(f"Biolab search_pubmed failed: {message}")
             return json.loads(result.content[0].text)

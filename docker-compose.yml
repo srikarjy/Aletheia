@@ -27,6 +27,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       MOCK_RETRIEVAL: "true"
+      MOCK_EMBEDDINGS: "true"
+      MOCK_LLM: "true"
     ports:
       - "8000:8000"
     depends_on:

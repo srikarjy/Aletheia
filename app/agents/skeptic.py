@@ -15,7 +15,7 @@ from uuid import UUID
 import psycopg
 from anthropic import Anthropic
 
-from app.llm import call_tool
+from app.llm import call_tool, _client as llm_client
 from app.prompts import SKEPTIC_PROMPT_TEMPLATE, prompt_hash
 
 MODEL = "claude-sonnet-4-5"
@@ -57,8 +57,6 @@ RAISE_CHALLENGES_TOOL = {
     },
 }
 
-_client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
 
 async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: dict) -> dict:
     claim = advocate_result["claim"]
@@ -72,7 +70,13 @@ async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: di
         claim=claim, case_summary=case["case_summary"], evidence_block=evidence_block
     )
 
-    critique = call_tool(_client, MODEL, 2048, RAISE_CHALLENGES_TOOL, prompt)
+    critique = call_tool(
+        llm_client,
+        MODEL,
+        tool_name="raise_challenges",
+        tool_schema=RAISE_CHALLENGES_TOOL["input_schema"],
+        prompt=prompt,
+    )
     version = prompt_hash(SKEPTIC_PROMPT_TEMPLATE)
 
     with conn.cursor() as cur:

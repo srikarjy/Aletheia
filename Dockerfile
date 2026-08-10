@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir \
     pgvector==0.5.0 \
     mcp==1.28.1 \
     anthropic==0.116.0 \
-    ragas==0.4.3
+    ragas==0.4.3 \
+    structlog==25.5.0
 
 # Patch ragas to use new langchain_google_vertexai import location
 COPY scripts/patch_ragas.py /tmp/patch_ragas.py

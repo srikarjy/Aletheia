@@ -19,7 +19,7 @@ from uuid import UUID
 import psycopg
 from anthropic import Anthropic
 
-from app.llm import call_tool
+from app.llm import call_tool, _client as llm_client
 from app.prompts import SYNTHESIZER_PROMPT_TEMPLATE, prompt_hash
 
 MODEL = "claude-sonnet-4-5"
@@ -63,8 +63,6 @@ SYNTHESIZE_TOOL = {
     },
 }
 
-_client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
 
 def _load_transcript(conn: psycopg.Connection, debate_id: UUID) -> list[dict]:
     """The transcript IS the provenance rows for this debate, in order. Each row's id
@@ -97,7 +95,13 @@ async def synthesizer(conn: psycopg.Connection, debate_id: UUID, claim: str) -> 
     transcript_block = _format_transcript(rows)
     prompt = SYNTHESIZER_PROMPT_TEMPLATE.format(claim=claim, transcript_block=transcript_block)
 
-    result = call_tool(_client, MODEL, 2048, SYNTHESIZE_TOOL, prompt)
+    result = call_tool(
+        llm_client,
+        MODEL,
+        tool_name="synthesize",
+        tool_schema=SYNTHESIZE_TOOL["input_schema"],
+        prompt=prompt,
+    )
     bad = [i for i in result["driving_provenance_ids"] if i not in valid_ids]
     if bad:
         # Enforce citation integrity: one corrective retry naming the offending ids, then
@@ -106,7 +110,13 @@ async def synthesizer(conn: psycopg.Connection, debate_id: UUID, claim: str) -> 
             f"\n\nCORRECTION: driving_provenance_ids {bad} are not rows in this debate's "
             f"transcript. Valid ids are {sorted(valid_ids)}. Resubmit citing only those."
         )
-        result = call_tool(_client, MODEL, 2048, SYNTHESIZE_TOOL, prompt + correction)
+        result = call_tool(
+            llm_client,
+            MODEL,
+            tool_name="synthesize",
+            tool_schema=SYNTHESIZE_TOOL["input_schema"],
+            prompt=prompt + correction,
+        )
         bad = [i for i in result["driving_provenance_ids"] if i not in valid_ids]
         if bad:
             raise RuntimeError(

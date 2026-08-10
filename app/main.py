@@ -16,7 +16,7 @@ import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,10 +26,16 @@ from app.agents.advocate import advocate
 from app.agents.skeptic import skeptic
 from app.agents.synthesizer import synthesizer
 from app.db import connect
+from app.embeddings import clear_embedding_cache, get_embedding_cache_stats
+from app.logging import configure_logging, get_logger, request_id_middleware
 from app.schemas import DebateRequest, DebateResponse, Source, TranscriptEntry
 
 # In-memory job store (replace with Redis in production)
 job_store: dict[str, dict] = {}
+
+# Job store TTL cleanup configuration
+JOB_STORE_TTL_SECONDS = int(os.environ.get("JOB_STORE_TTL_SECONDS", "3600"))  # 1 hour default
+JOB_STORE_MAX_SIZE = int(os.environ.get("JOB_STORE_MAX_SIZE", "1000"))
 
 # Simple claim cache (keyed by claim hash)
 claim_cache: dict[str, DebateResponse] = {}
@@ -41,6 +47,28 @@ embedding_cache: dict[str, list[float]] = {}
 def get_claim_hash(claim: str) -> str:
     """Generate deterministic hash for a claim for caching."""
     return hashlib.sha256(claim.strip().lower().encode()).hexdigest()[:16]
+
+
+def cleanup_job_store() -> int:
+    """Remove expired jobs from the job store. Returns number of jobs removed."""
+    import time
+    now = time.time()
+    expired = [
+        job_id for job_id, job in job_store.items()
+        if now - job.get("created_at", now) > JOB_STORE_TTL_SECONDS
+    ]
+    for job_id in expired:
+        del job_store[job_id]
+    
+    # Also enforce max size by removing oldest jobs
+    if len(job_store) > JOB_STORE_MAX_SIZE:
+        sorted_jobs = sorted(job_store.items(), key=lambda x: x[1].get("created_at", 0))
+        to_remove = len(job_store) - JOB_STORE_MAX_SIZE
+        for job_id, _ in sorted_jobs[:to_remove]:
+            del job_store[job_id]
+        expired.extend([j[0] for j in sorted_jobs[:to_remove]])
+    
+    return len(expired)
 
 
 async def run_debate_pipeline(claim: str, debate_id: str) -> DebateResponse:
@@ -92,6 +120,7 @@ async def run_debate_pipeline(claim: str, debate_id: str) -> DebateResponse:
 
 async def background_debate(job_id: str, claim: str) -> None:
     """Background task to run debate and store result."""
+    cleanup_job_store()  # Periodic cleanup on each job
     debate_id = str(uuid4())
     job_store[job_id]["status"] = "running"
     job_store[job_id]["debate_id"] = debate_id
@@ -113,6 +142,11 @@ async def background_debate(job_id: str, claim: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Configure structured logging
+    log_level = os.environ.get("LOG_LEVEL", "INFO")
+    json_logs = os.environ.get("JSON_LOGS", "false").lower() == "true"
+    configure_logging(level=log_level, json_output=json_logs)
+    
     # Startup: ensure frontend build exists
     frontend_dist = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
     if os.path.exists(frontend_dist):
@@ -130,10 +164,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for frontend development
+# Add request ID middleware
+app.middleware("http")(request_id_middleware)
+
+# CORS for frontend development - restrict in production
+cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -287,16 +325,24 @@ async def clear_cache() -> dict:
     """Clear the claim response cache."""
     count = len(claim_cache)
     claim_cache.clear()
-    embedding_cache.clear()
+    # Note: embedding_cache is now in embeddings module
+    return {"cleared_entries": count}
+
+
+@app.post("/cache/embeddings/clear")
+async def clear_embedding_cache_endpoint() -> dict:
+    """Clear the embedding cache."""
+    count = clear_embedding_cache()
     return {"cleared_entries": count}
 
 
 @app.get("/cache/stats")
 async def cache_stats() -> dict:
     """Get cache statistics."""
+    emb_stats = get_embedding_cache_stats()
     return {
         "claim_cache_size": len(claim_cache),
-        "embedding_cache_size": len(embedding_cache),
+        "embedding_cache_size": emb_stats["size"],
         "job_store_size": len(job_store),
     }
 
@@ -304,13 +350,14 @@ async def cache_stats() -> dict:
 @app.get("/health")
 async def health_check() -> dict:
     """Health check endpoint."""
+    emb_stats = get_embedding_cache_stats()
     return {
         "status": "healthy",
         "service": "aletheia",
         "version": "0.1.0",
         "cache_stats": {
             "claims": len(claim_cache),
-            "embeddings": len(embedding_cache),
+            "embeddings": emb_stats["size"],
             "jobs": len(job_store),
         },
     }
