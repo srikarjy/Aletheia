@@ -1,8 +1,10 @@
 # Aletheia
 
-> *"I designed a system where AI doesn't just answer — it argues with itself, shows its work, and cites its sources. This is how you build scientific AI you can actually trust."*
+> *"I designed a system where AI doesn't just answer — it argues with itself, shows its work, and cites its sources."*
 
 A multi-agent scientific reasoning system where AI agents with distinct epistemic roles debate a claim before producing a conclusion. Every piece of evidence is traced back to its exact source, version, and retrieval step.
+
+**This is a research prototype, not a medical or clinical decision-making tool.** Outputs are LLM-generated reasoning over retrieved abstracts and are not validated for accuracy — see [Results & Limitations](#results--limitations) below before drawing any conclusion from its output about an actual health claim.
 
 ---
 
@@ -18,7 +20,7 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 | 3 | Skeptic agent, real challenges against real evidence | ✅ Done 2026-07-13 |
 | 4 | Synthesizer, rubric-anchored confidence, real `/debate` endpoint | ✅ Done 2026-07-14 |
 | 5 | Scale to 5-claim eval set with zero manual intervention | ✅ Done 2026-07-15 |
-| 6 | Eval harness: debate vs single-model baseline, with numbers | ✅ Done 2026-07-15 |
+| 6 | Eval harness: debate vs single-model baseline, with numbers | ✅ Harness built, real run **inconclusive** — [see Results](#results--limitations) |
 
 **New: Interactive React frontend, async job queue, batch processing, caching.**
 
@@ -111,6 +113,28 @@ The thesis of Aletheia is that debate reduces unsupported claims vs a single-mod
 
 ---
 
+## Results & Limitations
+
+The eval harness (`scripts/run_phase6.py`) was run end-to-end against real Claude Sonnet 4.5 calls and real PubMed retrieval via Biolab MCP, across all 5 curated claims. The honest result:
+
+| Metric | Baseline (single-shot) | Debate (advocate→skeptic→synthesizer) | Delta |
+|---|---|---|---|
+| Citation accuracy (LLM-judge) | 0.67 | 0.52 | **−0.15** |
+| Mechanical unsupported-claim rate | 0% | 0% | 0% (no signal either way) |
+| Verdict matched expected label | — | 2 / 5 | — |
+
+**The debate architecture did not outperform the single-model baseline at n=5.** Citation accuracy was actually lower for the debate pipeline in this run, and the unsupported-claim rate showed no difference in either direction. This contradicts the project's original thesis, and that result is reported here deliberately rather than omitted — the eval harness exists to answer this question honestly, including when the answer is "no" or "not yet."
+
+**Why this result shouldn't be over-read, in either direction:**
+- **n=5 is a pilot, not a validated evaluation.** A single claim flipping outcome changes the aggregate numbers substantially at this sample size — this is not statistically powered to support a general claim about debate vs. baseline architectures.
+- **The "expected verdict" labels are self-curated**, not sourced from an external benchmark (e.g. a published systematic review or an established biomedical fact-checking dataset). They reflect one person's read of the literature, not a validated ground truth.
+- **Retrieval is abstract-only.** Neither pipeline sees full text, structured effect sizes, or study-design metadata (RCT vs. cohort vs. case series) as anything other than free text inside the abstract — a materially weaker evidence base than a real systematic review would use.
+- **Confidence scores are LLM self-reported against a written rubric, not calibrated** against outcomes (no Brier score, no calibration curve — the harness itself only claims an "ordinal proxy" at this n).
+
+**What this project actually demonstrates:** a working multi-agent architecture with real provenance tracking, a citation-integrity constraint that mechanically rejects unvalidated citations before they reach a user, and an eval harness that measures its own central thesis and reports the result even when unfavorable. It does not currently demonstrate that debate improves evidence synthesis over a single well-prompted model — that remains an open, disconfirmed-so-far question pending a larger and externally-validated eval set.
+
+---
+
 ## Stack
 
 | Layer | Tool | Why |
@@ -157,7 +181,7 @@ The thesis of Aletheia is that debate reduces unsupported claims vs a single-mod
 - Python 3.12 + Poetry
 - Node.js 20+ (for frontend dev)
 - `.env` file with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
-- Biolab MCP Server checked out as sibling directory
+- **Biolab MCP Server** — a separate, private PubMed-retrieval MCP server checked out as a sibling directory. It is not part of this repo and isn't published, so real retrieval won't work out of the box for anyone cloning Aletheia on its own. Set `MOCK_RETRIEVAL=true` to run without it (returns a small fixed set of mock papers instead of live PubMed results).
 
 ### Quick Start (Docker)
 ```bash
@@ -189,12 +213,18 @@ cd frontend && npm install && npm run dev
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 
-# Biolab (sibling directory)
+# Biolab (sibling directory) — see note above; not published, so most people
+# cloning this repo should use MOCK_RETRIEVAL=true instead.
 BIOLAB_PROJECT_PATH=../Biolab MCP Server
 BIOLAB_DB_PATH=../Biolab MCP Server/biolab.db
 
 # Database (default matches docker-compose)
 DATABASE_URL=postgresql://aletheia:aletheia@localhost:55432/aletheia
+
+# Mock modes — run without live external dependencies
+MOCK_RETRIEVAL=true     # skip Biolab MCP, use a small fixed set of mock papers
+MOCK_EMBEDDINGS=true    # skip OpenAI, use deterministic fake embeddings
+MOCK_LLM=true           # skip Anthropic, use a canned response per tool name
 ```
 
 ---

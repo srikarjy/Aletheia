@@ -1,10 +1,6 @@
 """Tests for evaluation and Ragas integration."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
-
-# Add the app directory to path
-sys.path.insert(0, "/Users/srikarjy/resume_projects/Aletheia")
 
 
 class TestPhase5Evaluation:

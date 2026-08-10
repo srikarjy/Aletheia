@@ -1,9 +1,6 @@
 """Tests for FastAPI endpoints - integration tests skipped, unit tests kept."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
-
-sys.path.insert(0, "/Users/srikarjy/resume_projects/Aletheia")
 
 
 class TestHealthEndpoint:

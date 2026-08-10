@@ -2,10 +2,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import json
-import sys
-
-# Add the app directory to path
-sys.path.insert(0, "/Users/srikarjy/resume_projects/Aletheia")
 
 
 class TestEmbeddings:

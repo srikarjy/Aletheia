@@ -1,6 +1,5 @@
 """Test configuration and fixtures."""
 import os
-import sys
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
@@ -12,9 +11,6 @@ os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/tes
 os.environ.setdefault("MOCK_RETRIEVAL", "true")
 os.environ.setdefault("BIOLAB_PROJECT_PATH", "/fake/path")
 os.environ.setdefault("BIOLAB_DB_PATH", "/fake/path/biolab.db")
-
-# Add the app directory to path
-sys.path.insert(0, "/Users/srikarjy/resume_projects/Aletheia")
 
 
 @pytest.fixture(scope="session")

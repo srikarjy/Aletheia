@@ -2,10 +2,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
-import sys
-
-# Add the app directory to path
-sys.path.insert(0, "/Users/srikarjy/resume_projects/Aletheia")
 
 TEST_DEBATE_ID = UUID("12345678-1234-5678-1234-567812345678")
 
