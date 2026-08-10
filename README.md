@@ -115,21 +115,25 @@ The thesis of Aletheia is that debate reduces unsupported claims vs a single-mod
 
 ## Results & Limitations
 
-**Most recent real run (n=5, since superseded by the claim-set expansion below):** the eval harness (`scripts/run_phase6.py`) was run end-to-end against real Claude Sonnet 4.5 calls and real PubMed retrieval via Biolab MCP.
+**Most recent real run (n=10):** the eval harness (`scripts/run_phase6.py`) was run end-to-end against real Claude Sonnet 4.5 calls and real PubMed retrieval via Biolab MCP, across all 10 externally-cited claims.
 
 | Metric | Baseline (single-shot) | Debate (advocate→skeptic→synthesizer) | Delta |
 |---|---|---|---|
-| Citation accuracy (LLM-judge) | 0.67 | 0.52 | **−0.15** |
-| Mechanical unsupported-claim rate | 0% | 0% | 0% (no signal either way) |
-| Verdict matched expected label | — | 2 / 5 | — |
+| Citation accuracy (LLM-judge) | 0.86 | 0.42 | **−0.45** |
+| Mechanical unsupported-claim rate | 0% | 10% | **+10pp, debate worse** |
+| Verdict matched expected label | — | 4 / 10 | — |
+| Cost per claim (real, measured) | $0.014 avg | $0.106 avg | **debate costs 7.4x baseline** |
 
-**The debate architecture did not outperform the single-model baseline at n=5.** Citation accuracy was actually lower for the debate pipeline in this run, and the unsupported-claim rate showed no difference in either direction. This contradicts the project's original thesis, and that result is reported here deliberately rather than omitted — the eval harness exists to answer this question honestly, including when the answer is "no" or "not yet."
+**At n=10, the debate architecture underperformed the single-model baseline on every metric measured, at roughly 7x the cost.** This is a stronger, more decisive negative result than an earlier n=5 partial run suggested (that run showed a smaller citation-accuracy gap and no signal on unsupported claims — both reversed and widened once the full claim set ran). The eval harness exists to answer this question honestly, including when the answer gets *more* unfavorable as the sample grows, not just when it's inconclusive.
 
-**Why that n=5 result shouldn't be over-read, in either direction, and what changed since:**
-- **n=5 was a pilot, not a validated evaluation**, and the `expected_verdict` labels were self-curated — one person's read of the literature, not sourced from an external benchmark. Both are being addressed: the eval set (`app/claims.py`) has been expanded to **10 claims, each graded against a specific, cited Cochrane review or equivalent systematic review/meta-analysis** (real DOI/PMID per claim — see the table below), so the ground truth itself is now independently checkable, not just the debate's reasoning about it. Sourcing this surfaced two corrections to the original labels themselves (documented in `app/claims.py`'s module docstring) — including one case where the original self-graded verdict didn't match what the cited review actually concluded.
-- **A fresh real run against the expanded 10-claim set has not yet been completed** — the numbers above are still the n=5 result and will be replaced once that run is done. Don't read the 10-claim table below as having been evaluated yet; it's the corrected ground truth, not yet a result.
+**Reading this result — what it does and doesn't show:**
+- **The 10 `expected_verdict` labels are now externally cited** (real Cochrane/systematic-review DOIs or PMIDs — see the table below and `app/claims.py`), not self-graded, so the ground truth here is independently checkable. This wasn't just a formality: sourcing the citations caught two mislabeled verdicts in the original 5-claim set before this run.
+- **n=10 is still a pilot for a debate-architecture claim**, though it's now enough to see a consistent, cost-quantified direction rather than a coin-flip-sized signal. A claim like "debate improves citation accuracy" would need a larger, ideally pre-registered eval to generalize from; "debate cost 7.4x more and scored lower on every measured metric in this n=10 run" is what's actually supported.
 - **Retrieval is still abstract-only.** Neither pipeline sees full text, structured effect sizes, or study-design metadata (RCT vs. cohort vs. case series) as anything other than free text inside the abstract — a materially weaker evidence base than a real systematic review would use.
-- **Confidence scores are still LLM self-reported against a written rubric, not calibrated** against outcomes (no Brier score, no calibration curve yet — planned once the larger eval set has enough claims per confidence bin to make one meaningful).
+- **Confidence scores are still LLM self-reported against a written rubric, not calibrated** against outcomes (no Brier score, no calibration curve — the module docstring already flags this as an open item, gated on having enough claims per confidence bin).
+- **One real bug surfaced by this run**: `aspirin_primary_prevention`'s debate arm tripped the mechanical unsupported-claim check (the only such case in either arm) — worth investigating before trusting that specific transcript's citations.
+
+**What this project actually demonstrates:** a working multi-agent architecture with real provenance tracking, a citation-integrity constraint that mechanically rejects unvalidated citations before they reach a user, and an eval harness that measured its own central thesis against externally-cited ground truth and reported a clear, unfavorable, cost-quantified result rather than a hedge. It does not currently demonstrate that debate improves evidence synthesis over a single well-prompted model — at n=10 it demonstrates the opposite, and that's the number to lead with, not around.
 
 **What this project actually demonstrates:** a working multi-agent architecture with real provenance tracking, a citation-integrity constraint that mechanically rejects unvalidated citations before they reach a user, and an eval harness that measures its own central thesis and reports the result even when unfavorable — now against an externally-verifiable ground truth instead of a self-graded one. It does not currently demonstrate that debate improves evidence synthesis over a single well-prompted model — that remains an open, disconfirmed-so-far question pending a full run against the expanded eval set.
 
