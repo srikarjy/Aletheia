@@ -142,6 +142,70 @@ class TestCallToolTruncation:
         assert client.messages.create.call_count < 100
 
 
+class TestCostTracker:
+    """Tests for app.llm's usage/cost tracking."""
+
+    def _response(self, input_tokens: int, output_tokens: int, tool_input: dict) -> MagicMock:
+        resp = MagicMock()
+        resp.stop_reason = "end_turn"
+        resp.usage.input_tokens = input_tokens
+        resp.usage.output_tokens = output_tokens
+        block = MagicMock()
+        block.type = "tool_use"
+        block.input = tool_input
+        resp.content = [block]
+        return resp
+
+    def test_call_tool_records_usage_and_computes_cost(self, mock_env):
+        from app.llm import call_tool, reset_cost_tracker
+
+        reset_cost_tracker()
+        client = MagicMock()
+        client.messages.create.return_value = self._response(1_000_000, 1_000_000, {"ok": True})
+
+        call_tool(
+            client, "claude-sonnet-4-5",
+            tool_name="t", tool_schema={"type": "object"}, prompt="x",
+        )
+
+        summary = reset_cost_tracker()
+        assert summary["input_tokens"] == 1_000_000
+        assert summary["output_tokens"] == 1_000_000
+        assert summary["calls"] == 1
+        # $3/1M input + $15/1M output at claim-set pricing for claude-sonnet-4-5
+        assert summary["cost_usd"] == pytest.approx(18.00)
+
+    def test_unpriced_model_tracks_tokens_but_zero_cost(self, mock_env):
+        """A model missing from PRICING_PER_MILLION_TOKENS shouldn't crash or silently
+        fabricate a cost — tokens are still counted, cost is explicitly zero."""
+        from app.llm import call_tool, reset_cost_tracker
+
+        reset_cost_tracker()
+        client = MagicMock()
+        client.messages.create.return_value = self._response(100, 50, {"ok": True})
+
+        call_tool(
+            client, "some-future-model-not-in-pricing-table",
+            tool_name="t", tool_schema={"type": "object"}, prompt="x",
+        )
+
+        summary = reset_cost_tracker()
+        assert summary["input_tokens"] == 100
+        assert summary["cost_usd"] == 0.0
+
+    def test_reset_returns_snapshot_and_zeroes_tracker(self, mock_env):
+        from app.llm import call_tool, get_cost_summary, reset_cost_tracker
+
+        reset_cost_tracker()
+        client = MagicMock()
+        client.messages.create.return_value = self._response(10, 10, {"ok": True})
+        call_tool(client, "claude-sonnet-4-5", tool_name="t", tool_schema={"type": "object"}, prompt="x")
+
+        snapshot = reset_cost_tracker()
+        assert snapshot["calls"] == 1
+        assert get_cost_summary() == {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0}
+
+
 class TestDatabase:
     """Tests for database module."""
 

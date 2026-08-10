@@ -14,6 +14,7 @@ Supports MOCK_LLM=true for demo/deployment without Anthropic dependency.
 import json
 import os
 import random
+import threading
 
 from anthropic import Anthropic
 
@@ -25,6 +26,50 @@ MAX_TOKENS_LIMIT = int(os.environ.get("CLAUDE_MAX_TOKENS_LIMIT", "8192"))
 _client: Anthropic | None = None
 if os.environ.get("MOCK_LLM", "").lower() != "true":
     _client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+# $/1M tokens. claude-sonnet-4-5 isn't in Anthropic's current pricing page (superseded
+# by claude-sonnet-5) — this is the last publicly documented Sonnet-4.x rate, not a
+# live-verified number. Re-check against platform.claude.com/docs/en/pricing before
+# treating a cost figure derived from this as billing-accurate.
+PRICING_PER_MILLION_TOKENS: dict[str, dict[str, float]] = {
+    "claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
+    "claude-sonnet-5": {"input": 3.00, "output": 15.00},
+    "claude-opus-5": {"input": 5.00, "output": 25.00},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+}
+
+_cost_lock = threading.Lock()
+_cost_tracker = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0}
+
+
+def _record_usage(model: str, input_tokens: int, output_tokens: int) -> None:
+    rates = PRICING_PER_MILLION_TOKENS.get(model)
+    cost = 0.0
+    if rates is not None:
+        cost = (input_tokens / 1_000_000) * rates["input"] + (output_tokens / 1_000_000) * rates["output"]
+    with _cost_lock:
+        _cost_tracker["input_tokens"] += input_tokens
+        _cost_tracker["output_tokens"] += output_tokens
+        _cost_tracker["cost_usd"] += cost
+        _cost_tracker["calls"] += 1
+
+
+def get_cost_summary() -> dict:
+    """Cumulative token usage and estimated cost since the last reset."""
+    with _cost_lock:
+        return dict(_cost_tracker)
+
+
+def reset_cost_tracker() -> dict:
+    """Snapshot the current totals and zero the tracker — use between claims/runs
+    to get a per-claim or per-run cost breakdown rather than one running total."""
+    with _cost_lock:
+        snapshot = dict(_cost_tracker)
+        _cost_tracker["input_tokens"] = 0
+        _cost_tracker["output_tokens"] = 0
+        _cost_tracker["cost_usd"] = 0.0
+        _cost_tracker["calls"] = 0
+    return snapshot
 
 
 def _mock_tool_response(tool_name: str, prompt: str) -> dict:
@@ -149,6 +194,7 @@ def call_tool(
             tool_choice={"type": "tool", "name": _tool_name},
             messages=[{"role": "user", "content": _prompt}],
         )
+        _record_usage(model, response.usage.input_tokens, response.usage.output_tokens)
         if response.stop_reason == "max_tokens":
             if not retry_on_truncation:
                 raise RuntimeError(

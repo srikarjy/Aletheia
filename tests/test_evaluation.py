@@ -10,7 +10,7 @@ class TestPhase5Evaluation:
         """Eval claims are defined with correct structure."""
         from app.claims import EVAL_CLAIMS
         
-        assert len(EVAL_CLAIMS) == 5
+        assert len(EVAL_CLAIMS) == 10
         for claim in EVAL_CLAIMS:
             assert hasattr(claim, 'id')
             assert hasattr(claim, 'claim')

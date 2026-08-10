@@ -29,7 +29,7 @@ from anthropic import Anthropic
 from app.claims import get_all_claims
 from app.db import connect
 from app.embeddings import embed
-from app.llm import call_tool, _client as llm_client
+from app.llm import call_tool, reset_cost_tracker, _client as llm_client
 from app.mcp_client import search_pubmed
 from app.prompts import ADVOCATE_PROMPT_TEMPLATE, prompt_hash
 
@@ -134,6 +134,14 @@ async def run_baseline(claim: str, claim_id: str) -> dict:
         conn.close()
 
 
+async def run_baseline_tracked(claim: str, claim_id: str) -> dict:
+    """run_baseline wrapped with a fresh cost-tracker snapshot per claim."""
+    reset_cost_tracker()
+    result = await run_baseline(claim, claim_id)
+    result["cost"] = reset_cost_tracker()
+    return result
+
+
 def mechanical_unsupported_check(answer: str, cited_pmids: list[str], provenance_paper_ids: list[str]) -> dict:
     """Mechanical check: does every assertion have a citation in provenance?"""
     import re
@@ -218,9 +226,10 @@ async def main() -> None:
     for i, claim_obj in enumerate(claims, 1):
         print(f"[{i}/{len(claims)}] Baseline: {claim_obj.claim[:60]}...")
         try:
-            result = await run_baseline(claim_obj.claim, claim_obj.id)
+            result = await run_baseline_tracked(claim_obj.claim, claim_obj.id)
             baselines.append(result)
             print(f"    ✓ Confidence: {result['confidence']:.2f}, Cited: {result['cited_pmids']}")
+            print(f"    Cost: ${result['cost']['cost_usd']:.4f}")
         except Exception as e:
             print(f"    ✗ FAILED: {e}")
             baselines.append({"claim_id": claim_obj.id, "error": str(e)})
@@ -241,6 +250,7 @@ async def main() -> None:
     # Compare each claim
     print("\n--- Comparison Results ---\n")
     comparisons = []
+    reset_cost_tracker()  # tracks judge-call cost only, separate from baseline/debate cost
 
     for claim_obj in claims:
         cid = claim_obj.id
@@ -319,6 +329,8 @@ async def main() -> None:
               f"citation_acc={comparison['debate']['citation_accuracy']:.2f}")
         print(f"  Expected:  {claim_obj.expected_verdict}")
 
+    judging_cost = reset_cost_tracker()
+
     # Aggregate results
     print("\n=== AGGREGATE METRICS ===\n")
 
@@ -338,6 +350,20 @@ async def main() -> None:
         print(f"  Baseline: {baseline_citation_acc:.2f}")
         print(f"  Debate:   {debate_citation_acc:.2f}")
         print(f"  Delta:    {debate_citation_acc - baseline_citation_acc:+.2f}")
+
+        # Cost — the eval harness measures accuracy; this is the other half of the
+        # build decision ("is the accuracy delta worth what it costs"), which the
+        # accuracy numbers alone don't answer.
+        baseline_cost = sum(b.get("cost", {}).get("cost_usd", 0.0) for b in baselines if "error" not in b)
+        debate_cost = sum(
+            debates.get(c["claim_id"], {}).get("cost", {}).get("cost_usd", 0.0) for c in comparisons
+        )
+        print(f"\nCost (Claude API, estimated — see app/llm.py PRICING_PER_MILLION_TOKENS):")
+        print(f"  Baseline: ${baseline_cost:.4f} total (n={len(comparisons)})")
+        print(f"  Debate:   ${debate_cost:.4f} total (n={len(comparisons)})")
+        if baseline_cost > 0:
+            print(f"  Debate costs {debate_cost / baseline_cost:.1f}x baseline per claim")
+        print(f"  Judging (LLM-judge, harness overhead, not attributed to either arm): ${judging_cost['cost_usd']:.4f}")
 
         # Confidence calibration proxy (Q4b)
         print(f"\nConfidence calibration (ordinal proxy at n={len(comparisons)}):")
@@ -359,6 +385,9 @@ async def main() -> None:
                     "debate_unsupported_rate": debate_unsupported / len(comparisons),
                     "baseline_citation_accuracy": baseline_citation_acc,
                     "debate_citation_accuracy": debate_citation_acc,
+                    "baseline_cost_usd": baseline_cost,
+                    "debate_cost_usd": debate_cost,
+                    "judging_cost_usd": judging_cost["cost_usd"],
                 },
             }, f, indent=2)
 

@@ -19,7 +19,7 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 | 2 | Advocate agent, provenance on every action | ✅ Done 2026-07-13 |
 | 3 | Skeptic agent, real challenges against real evidence | ✅ Done 2026-07-13 |
 | 4 | Synthesizer, rubric-anchored confidence, real `/debate` endpoint | ✅ Done 2026-07-14 |
-| 5 | Scale to 5-claim eval set with zero manual intervention | ✅ Done 2026-07-15 |
+| 5 | Scale to a curated eval set with zero manual intervention | ✅ Done 2026-07-15 (expanded to 10 externally-cited claims 2026-08-10) |
 | 6 | Eval harness: debate vs single-model baseline, with numbers | ✅ Harness built, real run **inconclusive** — [see Results](#results--limitations) |
 
 **New: Interactive React frontend, async job queue, batch processing, caching.**
@@ -115,7 +115,7 @@ The thesis of Aletheia is that debate reduces unsupported claims vs a single-mod
 
 ## Results & Limitations
 
-The eval harness (`scripts/run_phase6.py`) was run end-to-end against real Claude Sonnet 4.5 calls and real PubMed retrieval via Biolab MCP, across all 5 curated claims. The honest result:
+**Most recent real run (n=5, since superseded by the claim-set expansion below):** the eval harness (`scripts/run_phase6.py`) was run end-to-end against real Claude Sonnet 4.5 calls and real PubMed retrieval via Biolab MCP.
 
 | Metric | Baseline (single-shot) | Debate (advocate→skeptic→synthesizer) | Delta |
 |---|---|---|---|
@@ -125,13 +125,13 @@ The eval harness (`scripts/run_phase6.py`) was run end-to-end against real Claud
 
 **The debate architecture did not outperform the single-model baseline at n=5.** Citation accuracy was actually lower for the debate pipeline in this run, and the unsupported-claim rate showed no difference in either direction. This contradicts the project's original thesis, and that result is reported here deliberately rather than omitted — the eval harness exists to answer this question honestly, including when the answer is "no" or "not yet."
 
-**Why this result shouldn't be over-read, in either direction:**
-- **n=5 is a pilot, not a validated evaluation.** A single claim flipping outcome changes the aggregate numbers substantially at this sample size — this is not statistically powered to support a general claim about debate vs. baseline architectures.
-- **The "expected verdict" labels are self-curated**, not sourced from an external benchmark (e.g. a published systematic review or an established biomedical fact-checking dataset). They reflect one person's read of the literature, not a validated ground truth.
-- **Retrieval is abstract-only.** Neither pipeline sees full text, structured effect sizes, or study-design metadata (RCT vs. cohort vs. case series) as anything other than free text inside the abstract — a materially weaker evidence base than a real systematic review would use.
-- **Confidence scores are LLM self-reported against a written rubric, not calibrated** against outcomes (no Brier score, no calibration curve — the harness itself only claims an "ordinal proxy" at this n).
+**Why that n=5 result shouldn't be over-read, in either direction, and what changed since:**
+- **n=5 was a pilot, not a validated evaluation**, and the `expected_verdict` labels were self-curated — one person's read of the literature, not sourced from an external benchmark. Both are being addressed: the eval set (`app/claims.py`) has been expanded to **10 claims, each graded against a specific, cited Cochrane review or equivalent systematic review/meta-analysis** (real DOI/PMID per claim — see the table below), so the ground truth itself is now independently checkable, not just the debate's reasoning about it. Sourcing this surfaced two corrections to the original labels themselves (documented in `app/claims.py`'s module docstring) — including one case where the original self-graded verdict didn't match what the cited review actually concluded.
+- **A fresh real run against the expanded 10-claim set has not yet been completed** — the numbers above are still the n=5 result and will be replaced once that run is done. Don't read the 10-claim table below as having been evaluated yet; it's the corrected ground truth, not yet a result.
+- **Retrieval is still abstract-only.** Neither pipeline sees full text, structured effect sizes, or study-design metadata (RCT vs. cohort vs. case series) as anything other than free text inside the abstract — a materially weaker evidence base than a real systematic review would use.
+- **Confidence scores are still LLM self-reported against a written rubric, not calibrated** against outcomes (no Brier score, no calibration curve yet — planned once the larger eval set has enough claims per confidence bin to make one meaningful).
 
-**What this project actually demonstrates:** a working multi-agent architecture with real provenance tracking, a citation-integrity constraint that mechanically rejects unvalidated citations before they reach a user, and an eval harness that measures its own central thesis and reports the result even when unfavorable. It does not currently demonstrate that debate improves evidence synthesis over a single well-prompted model — that remains an open, disconfirmed-so-far question pending a larger and externally-validated eval set.
+**What this project actually demonstrates:** a working multi-agent architecture with real provenance tracking, a citation-integrity constraint that mechanically rejects unvalidated citations before they reach a user, and an eval harness that measures its own central thesis and reports the result even when unfavorable — now against an externally-verifiable ground truth instead of a self-graded one. It does not currently demonstrate that debate improves evidence synthesis over a single well-prompted model — that remains an open, disconfirmed-so-far question pending a full run against the expanded eval set.
 
 ---
 
@@ -162,7 +162,7 @@ The eval harness (`scripts/run_phase6.py`) was run end-to-end against real Claud
 - **Async Job Queue**: `/debate/async` submits job, poll `/debate/jobs/{job_id}` for result
 - **Response Caching**: Repeated claims return cached results instantly with new `debate_id`
 - **Batch Processing**: `/batch/debate` processes multiple claims sequentially
-- **Evaluation Runner**: `/batch/eval/run` executes full 5-claim eval set
+- **Evaluation Runner**: `/batch/eval/run` executes the full curated eval set
 - **Health & Cache Stats**: `/health`, `/cache/stats`, `/cache/clear`
 
 ### Interactive Frontend (React + Vite)
@@ -264,7 +264,7 @@ POST /batch/eval/run
 # Runs all 5 curated claims
 
 GET /batch/eval/claims
-# Lists the 5 claims with metadata
+# Lists the curated claims with metadata
 ```
 
 ### Utilities
@@ -278,15 +278,22 @@ DELETE /debate/jobs/{job_id}   # Delete job
 
 ---
 
-## Evaluation Claims (Phase 5)
+## Evaluation Claims
 
-| ID | Claim | Category | Expected |
-|---|---|---|---|
-| `brca1_pancreatic` | BRCA1 mutations increase pancreatic cancer risk | Conflicting | Unresolved |
-| `vitamin_d_covid` | Vitamin D supplementation prevents severe COVID-19 | Conflicting | Refuted |
-| `aspirin_primary` | Low-dose aspirin reduces all-cause mortality in healthy older adults | Ground Truth | Refuted |
-| `omega3_cvd` | Omega-3 supplementation reduces major adverse cardiovascular events | Conflicting | Unresolved |
-| `hrt_mortality` | Menopausal hormone therapy reduces all-cause mortality in women under 60 | Ground Truth | Supported |
+Each claim's `expected_verdict` is graded against a specific, cited systematic review or meta-analysis (real DOI/PMID — see `source_citation` in `app/claims.py`), not against this project's own judgment.
+
+| ID | Claim | Category | Expected | Graded against |
+|---|---|---|---|---|
+| `brca1_pancreatic` | BRCA1 mutations increase pancreatic cancer risk | Conflicting | Unresolved | Yin et al. 2024, PMID 38809921 |
+| `vitamin_d_covid` | Vitamin D supplementation prevents severe COVID-19 | Conflicting | Unresolved | Stroehlein et al. 2021 (Cochrane), PMID 34029377 |
+| `aspirin_primary_prevention` | Low-dose aspirin reduces all-cause mortality in healthy older adults | Ground Truth | Refuted | Guirguis-Blake et al. 2016 (USPSTF), PMID 27064410 |
+| `omega3_cardiovascular` | Omega-3 supplementation reduces major adverse cardiovascular events | Conflicting | Unresolved | Abdelhamid et al. 2020 (Cochrane CD003177.pub5) |
+| `hormone_replacement_therapy` | Menopausal hormone therapy reduces all-cause mortality in women under 60 | Conflicting | Supported | Boardman et al. 2015 (Cochrane CD002229.pub4) |
+| `vitamin_c_common_cold` | Vitamin C supplementation prevents the common cold | Ground Truth | Refuted | Hemilä & Chalker 2013 (Cochrane CD000980.pub4) |
+| `antioxidant_supplements_mortality` | Antioxidant supplements reduce all-cause mortality | Ground Truth | Refuted | Bjelakovic et al. 2012 (Cochrane CD007176.pub2) |
+| `glucosamine_osteoarthritis` | Glucosamine reduces pain in osteoarthritis | Conflicting | Unresolved | Towheed et al. 2005 (Cochrane CD002946) |
+| `probiotics_pediatric_aad` | Probiotics prevent antibiotic-associated diarrhea in children | Ground Truth | Supported | Guo, Goldenberg et al. 2019 (Cochrane CD004827.pub5) |
+| `statins_primary_prevention` | Statins reduce all-cause mortality in primary prevention of CVD | Ground Truth | Supported | Taylor et al. 2013 (Cochrane CD004816.pub5) |
 
 Run eval:
 ```bash
@@ -329,7 +336,7 @@ Aletheia/
 │   ├── run_phase2.py    # Advocate verification
 │   ├── run_phase3.py    # Skeptic verification
 │   ├── run_phase4.py    # Full pipeline verification
-│   ├── run_phase5.py    # 5-claim evaluation
+│   ├── run_phase5.py    # curated eval set — full debate run
 │   └── run_phase6.py    # Baseline vs debate comparison
 ├── docker-compose.yml
 ├── Dockerfile

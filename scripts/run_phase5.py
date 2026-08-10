@@ -23,6 +23,7 @@ from app.agents.skeptic import skeptic
 from app.agents.synthesizer import synthesizer
 from app.claims import get_all_claims
 from app.db import connect
+from app.llm import reset_cost_tracker
 
 
 async def run_single_debate(claim: str, claim_id: str) -> dict:
@@ -104,11 +105,14 @@ async def main() -> None:
         print(f"    Category: {claim_obj.category}, Expected: {claim_obj.expected_verdict or 'N/A'}")
         print(f"    Rationale: {claim_obj.rationale[:100]}...")
 
+        reset_cost_tracker()  # per-claim cost, not a running total across claims
         start = time.monotonic()
         try:
             result = await run_single_debate(claim_obj.claim, claim_obj.id)
             latency = time.monotonic() - start
+            cost = reset_cost_tracker()
             result["latency_seconds"] = latency
+            result["cost"] = cost
             result["expected_verdict"] = claim_obj.expected_verdict
             result["category"] = claim_obj.category
             results.append(result)
@@ -116,15 +120,18 @@ async def main() -> None:
             print(f"    ✓ Completed in {latency:.1f}s")
             print(f"    Verdict: {result['verdict']}, Confidence: {result['confidence']:.2f}")
             print(f"    Provenance rows: {result['num_provenance_rows']}, Sources: {len(result['sources'])}")
+            print(f"    Cost: ${cost['cost_usd']:.4f} ({cost['input_tokens']}+{cost['output_tokens']} tokens, {cost['calls']} calls)")
 
         except Exception as e:
             latency = time.monotonic() - start
+            cost = reset_cost_tracker()
             print(f"    ✗ FAILED after {latency:.1f}s: {e}")
             results.append({
                 "claim_id": claim_obj.id,
                 "claim": claim_obj.claim,
                 "error": str(e),
                 "latency_seconds": latency,
+                "cost": cost,
                 "expected_verdict": claim_obj.expected_verdict,
                 "category": claim_obj.category,
             })
@@ -157,6 +164,10 @@ async def main() -> None:
     for r in successful:
         match = "✓" if r.get("expected_verdict") == r.get("verdict") else "✗"
         print(f"  {match} {r['claim_id']}: got {r['verdict']} (expected {r.get('expected_verdict', 'N/A')}), conf={r['confidence']:.2f}")
+
+    total_cost = sum(r.get("cost", {}).get("cost_usd", 0.0) for r in results)
+    total_calls = sum(r.get("cost", {}).get("calls", 0) for r in results)
+    print(f"\nTotal cost: ${total_cost:.4f} across {total_calls} Claude calls ({len(results)} claims)")
 
     if failed:
         print("\nFailures:")

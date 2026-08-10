@@ -154,7 +154,7 @@ class TestBatchEndpoints:
         data = response.json()
         assert "claims" in data
         assert isinstance(data["claims"], list)
-        assert len(data["claims"]) == 5
+        assert len(data["claims"]) == 10
 
 
 class TestAPISchemas:
