@@ -1,10 +1,10 @@
 """POST /debate's default reasoning path is single_call (app/agents/single_call.py),
 not the three-agent Advocate->Skeptic->Synthesizer pipeline: run_phase6.py's real eval
-(n=10, real Claude calls, real PubMed retrieval) found debate did not measurably
-outperform a single well-prompted call — see README.md's Results & Limitations. The
-debate pipeline is not deleted: it's the eval harness's subject, and it stays reachable
-at POST /debate/multi-agent, unchanged, so the comparison it's measured against keeps
-meaning something.
+(n=10, real Claude calls, real PubMed retrieval) found debate underperformed a single
+well-prompted call on every metric measured, at 7.4x the cost — see README.md's
+Results & Limitations. The debate pipeline is not deleted: it's the eval harness's
+subject, and it stays reachable at POST /debate/multi-agent, unchanged, so the
+comparison it's measured against keeps meaning something.
 
 Both paths support sync and async modes, and both build the response by
 reconstructing it from the provenance rows the agent(s) wrote, so the transcript the

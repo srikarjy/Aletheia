@@ -20,7 +20,7 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 | 3 | Skeptic agent, real challenges against real evidence | ✅ Done 2026-07-13 |
 | 4 | Synthesizer, rubric-anchored confidence, real `/debate` endpoint | ✅ Done 2026-07-14 |
 | 5 | Scale to a curated eval set with zero manual intervention | ✅ Done 2026-07-15 (expanded to 10 externally-cited claims 2026-08-10) |
-| 6 | Eval harness: debate vs single-model baseline, with numbers | ✅ Harness built, real run **inconclusive** — [see Results](#results--limitations) |
+| 6 | Eval harness: debate vs single-model baseline, with numbers | ✅ Harness built, real n=10 run: debate **underperformed baseline on every metric at 7.4x cost** — [see Results](#results--limitations) |
 
 **New: Interactive React frontend, async job queue, batch processing, caching.**
 
@@ -28,7 +28,7 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 
 ## Default reasoning path (updated 2026-08-11)
 
-`POST /debate` now runs **single_call** — real grounded retrieval followed by one rubric-anchored Claude call — not the three-agent Advocate→Skeptic→Synthesizer pipeline described below. This isn't a walk-back of the multi-agent idea; it's the project's own Phase 6 finding, acted on: the eval harness measured debate against a single well-prompted call and the result was **inconclusive** (see [Results & Limitations](#results--limitations)). Defaulting to three sequential LLM calls with no measured benefit over one isn't defensible on latency or cost grounds, so it stopped being the default.
+`POST /debate` now runs **single_call** — real grounded retrieval followed by one rubric-anchored Claude call — not the three-agent Advocate→Skeptic→Synthesizer pipeline described below. This isn't a walk-back of the multi-agent idea; it's the project's own Phase 6 finding, acted on: the eval harness's real n=10 run found debate **underperformed the single-call baseline on every metric measured, at 7.4x the cost** (see [Results & Limitations](#results--limitations)). Defaulting to three sequential LLM calls that measurably score worse than one, at 7x the price, isn't defensible — so it stopped being the default.
 
 The debate pipeline is not deleted. It's still real, still tested, and still reachable at `POST /debate/multi-agent` and via `/batch/eval/run` — because it's the eval harness's subject, and the comparison only means something if it keeps running under the same conditions it was measured under. What single_call kept from it, because these earned their keep independent of the three-agent structure: grounded retrieval with a provenance row per paper, rubric-anchored confidence (the same rubric v1, unchanged), and code-enforced citation integrity (a hallucinated or out-of-evidence citation is rejected and retried once, then fails loudly rather than getting silently accepted). See `app/agents/single_call.py`'s module docstring for the full reasoning.
 
@@ -100,7 +100,7 @@ User types a scientific claim
 ## Why Every Decision Exists
 
 ### Multi-agent loop, not a single model with better prompting — status: not confirmed
-This was the original thesis, and the argument still holds in principle: agent separation forces each step to produce a traceable artifact, rather than collapsing five cognitive operations into one opaque forward pass. But it's a claim that has to earn itself against measurement, not just argument, and Phase 6's real eval (n=10, real Claude calls, real PubMed retrieval) found debate did not measurably outperform a single well-prompted call. That's why `/debate` defaults to single_call now (see [Default reasoning path](#default-reasoning-path-updated-2026-08-11)) rather than this pipeline. The debate pipeline stays, at `/debate/multi-agent`, as the eval harness's subject — the question this section poses is still open, not answered no, and the harness is how it gets re-tested rather than re-argued.
+This was the original thesis, and the argument still holds in principle: agent separation forces each step to produce a traceable artifact, rather than collapsing five cognitive operations into one opaque forward pass. But it's a claim that has to earn itself against measurement, not just argument, and Phase 6's real eval (n=10, real Claude calls, real PubMed retrieval) found debate underperformed a single well-prompted call on every metric measured, at 7.4x the cost. That's why `/debate` defaults to single_call now (see [Default reasoning path](#default-reasoning-path-updated-2026-08-11)) rather than this pipeline. The debate pipeline stays, at `/debate/multi-agent`, as the eval harness's subject — the question this section poses is still open, not answered no, and the harness is how it gets re-tested rather than re-argued.
 
 ### Custom agent loop, not LangChain
 Provenance tracing is the core product. LangChain hides agent decisions inside abstractions you don't control. A custom loop gives you the exact artifact at every step — which is what you need to write lineage you can query later.
