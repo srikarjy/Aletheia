@@ -265,13 +265,14 @@ class TestMCPClient:
 
     @pytest.mark.asyncio
     async def test_search_pubmed_real_mode_requires_biolab_path(self, mock_env):
-        """Real mode requires BIOLAB_PROJECT_PATH."""
+        """Real mode with BIOLAB_PROJECT_PATH unset is a hard failure, not a
+        silent fallback to mock data -- a debate run advertised as grounded
+        in real literature must not be able to silently become a mock run."""
         with patch.dict("os.environ", {"MOCK_RETRIEVAL": "false", "BIOLAB_PROJECT_PATH": ""}, clear=False):
             from app.mcp_client import search_pubmed
-            
-            with pytest.warns(UserWarning, match="BIOLAB_PROJECT_PATH not set"):
-                result = await search_pubmed("test", "test:agent", 5)
-                assert "papers" in result
+
+            with pytest.raises(RuntimeError, match="BIOLAB_PROJECT_PATH"):
+                await search_pubmed("test", "test:agent", 5)
 
 
 class TestSchemas:

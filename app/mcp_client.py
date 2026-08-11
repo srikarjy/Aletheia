@@ -201,9 +201,14 @@ def _get_mock_papers(query: str) -> list[dict[str, Any]]:
 
 async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout: float = 30.0) -> dict:
     """
-    Search PubMed via Biolab MCP server, or return mock data if MOCK_RETRIEVAL=true
-    or BIOLAB_PROJECT_PATH not set.
-    
+    Search PubMed via Biolab MCP server, or return mock data if MOCK_RETRIEVAL=true.
+
+    Misconfiguration (BIOLAB_PROJECT_PATH/BIOLAB_DB_PATH not set) is a hard
+    failure, not a silent fallback to mock data — a debate run that's
+    supposed to be grounded in real literature must not be able to
+    silently become a mock run just because an env var was forgotten.
+    Mock mode is opt-in only, via MOCK_RETRIEVAL=true.
+
     Args:
         query: Search query string
         agent_id: Agent identifier for Biolab audit trail
@@ -214,19 +219,23 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout
     if os.environ.get("MOCK_RETRIEVAL", "").lower() == "true":
         papers = _get_mock_papers(query)[:max_results]
         return {"query_echo": query, "papers": papers}
-    
-    # Check if Biolab path is configured
+
     biolab_path = os.environ.get("BIOLAB_PROJECT_PATH")
     if not biolab_path:
-        # Auto-fallback to mock with warning
-        import warnings
-        warnings.warn(
-            "BIOLAB_PROJECT_PATH not set, falling back to mock retrieval. "
-            "Set MOCK_RETRIEVAL=true to suppress this warning.",
-            UserWarning,
+        raise RuntimeError(
+            "BIOLAB_PROJECT_PATH is not set and MOCK_RETRIEVAL is not \"true\" -- "
+            "refusing to silently fall back to mock retrieval. Set "
+            "BIOLAB_PROJECT_PATH to a real Biolab MCP server checkout, or set "
+            "MOCK_RETRIEVAL=true to explicitly opt into mock data."
         )
-        papers = _get_mock_papers(query)[:max_results]
-        return {"query_echo": query, "papers": papers}
+    biolab_db_path = os.environ.get("BIOLAB_DB_PATH")
+    if not biolab_db_path:
+        raise RuntimeError(
+            "BIOLAB_PROJECT_PATH is set but BIOLAB_DB_PATH is not -- refusing to "
+            "silently fall back to mock retrieval. Set BIOLAB_DB_PATH to Biolab's "
+            "sqlite database path, or set MOCK_RETRIEVAL=true to explicitly opt "
+            "into mock data."
+        )
 
     # Real Biolab MCP call with timeout
     params = StdioServerParameters(
@@ -235,7 +244,7 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout
         cwd=biolab_path,
         env={
             **os.environ,
-            "BIOLAB_DB_PATH": os.environ["BIOLAB_DB_PATH"],
+            "BIOLAB_DB_PATH": biolab_db_path,
         },
     )
     async with stdio_client(params) as (read, write):
