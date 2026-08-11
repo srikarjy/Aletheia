@@ -1,11 +1,15 @@
-"""Phase 4+: POST /debate runs the real advocate -> skeptic -> synthesizer pipeline
-end to end (BLUEPRINT.md Phase 4 exit criteria), no fixtures. Q5 decided this is a
-fixed single pass each, in order. Q8 (sync vs async) — this endpoint supports both
-sync and async modes. Latency measured at ~74s for sync, async available for production.
+"""POST /debate's default reasoning path is single_call (app/agents/single_call.py),
+not the three-agent Advocate->Skeptic->Synthesizer pipeline: run_phase6.py's real eval
+(n=10, real Claude calls, real PubMed retrieval) found debate did not measurably
+outperform a single well-prompted call — see README.md's Results & Limitations. The
+debate pipeline is not deleted: it's the eval harness's subject, and it stays reachable
+at POST /debate/multi-agent, unchanged, so the comparison it's measured against keeps
+meaning something.
 
-The response is reconstructed from the provenance rows the three agents wrote, so the
-transcript the caller sees is literally the audit trail, not a parallel summary that
-could drift from it.
+Both paths support sync and async modes, and both build the response by
+reconstructing it from the provenance rows the agent(s) wrote, so the transcript the
+caller sees is literally the audit trail, not a parallel summary that could drift
+from it.
 """
 
 import asyncio
@@ -25,6 +29,7 @@ from pydantic import BaseModel
 from app.agents.advocate import advocate
 from app.agents.skeptic import skeptic
 from app.agents.synthesizer import synthesizer
+from app.agents.single_call import single_call
 from app.db import connect
 from app.embeddings import clear_embedding_cache, get_embedding_cache_stats
 from app.logging import configure_logging, get_logger, request_id_middleware
@@ -71,8 +76,58 @@ def cleanup_job_store() -> int:
     return len(expired)
 
 
+async def run_synthesis_pipeline(claim: str, debate_id: str) -> DebateResponse:
+    """Default reasoning path: single_call retrieves evidence and resolves the
+    claim in one Claude call. See app/agents/single_call.py's module
+    docstring for why this replaced the three-agent pipeline as the default."""
+    from uuid import UUID
+    conn = connect()
+    try:
+        result = await single_call(conn, claim, UUID(debate_id))
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT agent, action, source_paper_id, detail "
+                "FROM provenance WHERE debate_id = %s ORDER BY id",
+                (debate_id,),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    transcript = [
+        TranscriptEntry(
+            agent=agent,
+            action=action,
+            detail=detail if detail is not None else {},
+            source_paper_id=source_paper_id,
+        )
+        for agent, action, source_paper_id, detail in rows
+    ]
+
+    sources = [
+        Source(paper_id=p["pmid"], title=p["title"], used_by=["single_call"])
+        for p in result["papers"]
+    ]
+
+    return DebateResponse(
+        debate_id=debate_id,
+        claim=claim,
+        conclusion=result["conclusion"],
+        verdict=result["verdict"],
+        confidence=result["confidence"],
+        confidence_rationale=result["confidence_rationale"],
+        driving_provenance_ids=result["driving_provenance_ids"],
+        transcript=transcript,
+        sources=sources,
+    )
+
+
 async def run_debate_pipeline(claim: str, debate_id: str) -> DebateResponse:
-    """Run the full debate pipeline and return structured response."""
+    """Multi-agent Advocate->Skeptic->Synthesizer pipeline. Kept unchanged as
+    the eval harness's subject (run_phase6.py compares this against
+    run_synthesis_pipeline's baseline) — not the default path, see
+    POST /debate/multi-agent."""
     from uuid import UUID
     conn = connect()
     try:
@@ -118,7 +173,7 @@ async def run_debate_pipeline(claim: str, debate_id: str) -> DebateResponse:
     )
 
 
-async def background_debate(job_id: str, claim: str) -> None:
+async def background_debate(job_id: str, claim: str, multi_agent: bool = False) -> None:
     """Background task to run debate and store result."""
     cleanup_job_store()  # Periodic cleanup on each job
     debate_id = str(uuid4())
@@ -127,7 +182,8 @@ async def background_debate(job_id: str, claim: str) -> None:
     job_store[job_id]["started_at"] = time.time()
 
     try:
-        result = await run_debate_pipeline(claim, debate_id)
+        pipeline = run_debate_pipeline if multi_agent else run_synthesis_pipeline
+        result = await pipeline(claim, debate_id)
         job_store[job_id]["status"] = "completed"
         job_store[job_id]["result"] = result.model_dump()
         job_store[job_id]["completed_at"] = time.time()
@@ -181,6 +237,7 @@ app.add_middleware(
 class AsyncDebateRequest(BaseModel):
     claim: str
     async_mode: bool = False
+    multi_agent: bool = False  # False (default) = single_call; True = the eval harness's Advocate->Skeptic->Synthesizer pipeline
 
 
 class JobStatusResponse(BaseModel):
@@ -197,8 +254,10 @@ class JobStatusResponse(BaseModel):
 @app.post("/debate", response_model=DebateResponse)
 async def debate_sync(request: DebateRequest) -> DebateResponse:
     """
-    Synchronous debate endpoint. Runs the full advocate → skeptic → synthesizer pipeline.
-    Uses caching for repeated claims. Expected latency: ~74 seconds.
+    Synchronous debate endpoint. Runs single_call: real retrieval + one
+    rubric-anchored Claude call (see app/agents/single_call.py's module
+    docstring for why this is the default over the multi-agent pipeline).
+    Uses caching for repeated claims.
     """
     claim = request.claim.strip()
     if not claim:
@@ -221,6 +280,26 @@ async def debate_sync(request: DebateRequest) -> DebateResponse:
             transcript=cached.transcript,
             sources=cached.sources,
         )
+
+    debate_id = str(uuid4())
+    result = await run_synthesis_pipeline(claim, debate_id)
+    claim_cache[claim_hash] = result
+    return result
+
+
+@app.post("/debate/multi-agent", response_model=DebateResponse)
+async def debate_multi_agent(request: DebateRequest) -> DebateResponse:
+    """
+    Runs the original Advocate -> Skeptic -> Synthesizer pipeline explicitly.
+    Not the default (see POST /debate) -- kept reachable because it's the
+    eval harness's (run_phase6.py) subject; the comparison against
+    single_call only means something if this keeps running under the same
+    conditions it was measured under. Expected latency: ~74 seconds.
+    Not cached, unlike /debate, so eval runs always get a fresh pass.
+    """
+    claim = request.claim.strip()
+    if not claim:
+        raise HTTPException(status_code=400, detail="Claim cannot be empty")
 
     debate_id = str(uuid4())
     return await run_debate_pipeline(claim, debate_id)
@@ -269,7 +348,7 @@ async def debate_async(request: AsyncDebateRequest, background_tasks: Background
         "created_at": time.time(),
     }
 
-    background_tasks.add_task(background_debate, job_id, claim)
+    background_tasks.add_task(background_debate, job_id, claim, request.multi_agent)
 
     return JobStatusResponse(
         job_id=job_id,

@@ -7,7 +7,7 @@ import asyncio
 import time
 
 from app.claims import get_all_claims, EvalClaim
-from app.main import run_debate_pipeline, background_debate, job_store
+from app.main import run_debate_pipeline, run_synthesis_pipeline, background_debate, job_store
 
 router = APIRouter(prefix="/batch", tags=["batch"])
 
@@ -64,16 +64,20 @@ async def batch_debate(request: BatchRequest, background_tasks: BackgroundTasks)
     )
 
 
-async def process_batch(batch_id: str) -> None:
-    """Process a batch of claims sequentially."""
+async def process_batch(batch_id: str, multi_agent: bool = False) -> None:
+    """Process a batch of claims sequentially. multi_agent=True runs the
+    eval harness's Advocate->Skeptic->Synthesizer pipeline (used by
+    /eval/run, which is specifically evaluating it); everything else
+    defaults to single_call, same as POST /debate."""
     job = batch_jobs[batch_id]
     job["status"] = "running"
     job["started_at"] = time.time()
+    pipeline = run_debate_pipeline if multi_agent else run_synthesis_pipeline
 
     for i, claim in enumerate(job["claims"]):
         debate_id = f"{batch_id}_{i}"
         try:
-            result = await run_debate_pipeline(claim, debate_id)
+            result = await pipeline(claim, debate_id)
             job["results"].append({
                 "index": i,
                 "claim": claim,
@@ -130,8 +134,8 @@ async def run_full_eval(background_tasks: BackgroundTasks) -> dict:
         "is_eval": True,
     }
     
-    background_tasks.add_task(process_batch, batch_id)
-    
+    background_tasks.add_task(process_batch, batch_id, True)  # multi_agent=True: this endpoint evaluates the debate pipeline specifically
+
     return {
         "batch_id": batch_id,
         "message": "Evaluation started. Poll /batch/debate/{batch_id} for status.",

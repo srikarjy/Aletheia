@@ -26,6 +26,14 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 
 ---
 
+## Default reasoning path (updated 2026-08-11)
+
+`POST /debate` now runs **single_call** — real grounded retrieval followed by one rubric-anchored Claude call — not the three-agent Advocate→Skeptic→Synthesizer pipeline described below. This isn't a walk-back of the multi-agent idea; it's the project's own Phase 6 finding, acted on: the eval harness measured debate against a single well-prompted call and the result was **inconclusive** (see [Results & Limitations](#results--limitations)). Defaulting to three sequential LLM calls with no measured benefit over one isn't defensible on latency or cost grounds, so it stopped being the default.
+
+The debate pipeline is not deleted. It's still real, still tested, and still reachable at `POST /debate/multi-agent` and via `/batch/eval/run` — because it's the eval harness's subject, and the comparison only means something if it keeps running under the same conditions it was measured under. What single_call kept from it, because these earned their keep independent of the three-agent structure: grounded retrieval with a provenance row per paper, rubric-anchored confidence (the same rubric v1, unchanged), and code-enforced citation integrity (a hallucinated or out-of-evidence citation is rejected and retried once, then fails loudly rather than getting silently accepted). See `app/agents/single_call.py`'s module docstring for the full reasoning.
+
+---
+
 ## The Problem
 
 A single LLM call collapses five distinct cognitive operations into one opaque text artifact:
@@ -47,28 +55,29 @@ User types a scientific claim
             │
             ▼
          FastAPI
-   POST /debate { claim }
+   POST /debate { claim }              (default: single_call)
+   POST /debate/multi-agent { claim }  (explicit: the pipeline below)
    returns { debate_transcript, sources, confidence }
             │
             ▼
-     Custom Agent Loop
-            │
-     ┌──────┴──────┐
-     │  ADVOCATE   │ ──► Biolab MCP Server (PubMed retrieval)
-     │  builds case│
-     └──────┬──────┘
-            │ passes evidence + case
-     ┌──────┴──────┐
-     │   SKEPTIC   │  challenges sources, flags uncertainty,
-     │             │  identifies conflicting evidence
-     └──────┬──────┘
-            │ debate transcript
-     ┌──────┴──────┐
-     │ SYNTHESIZER │  resolves conflict, assigns confidence,
-     │             │  produces structured conclusion
-     └──────┬──────┘
-            │ writes provenance at every step
-            ▼
+   single_call (default)                  Custom Agent Loop (/debate/multi-agent)
+            │                                        │
+   ┌────────┴────────┐                       ┌──────┴──────┐
+   │ retrieve + one   │──► Biolab MCP Server  │  ADVOCATE   │ ──► Biolab MCP Server
+   │ rubric-anchored  │    (PubMed retrieval) │  builds case│     (PubMed retrieval)
+   │ Claude call      │                       └──────┬──────┘
+   └────────┬────────┘                               │ passes evidence + case
+            │                                 ┌──────┴──────┐
+            │                                 │   SKEPTIC   │  challenges sources,
+            │                                 │             │  identifies conflicts
+            │                                 └──────┬──────┘
+            │                                        │ debate transcript
+            │                                 ┌──────┴──────┐
+            │                                 │ SYNTHESIZER │  resolves conflict,
+            │                                 │             │  assigns confidence
+            │                                 └──────┬──────┘
+            │ writes provenance at every step         │ writes provenance at every step
+            ▼                                        ▼
          pgvector
    ┌─────────────────┐   ┌──────────────────────────┐
    │  embeddings     │   │  provenance              │
@@ -90,8 +99,8 @@ User types a scientific claim
 
 ## Why Every Decision Exists
 
-### Multi-agent loop, not a single model with better prompting
-A prompt saying "steelman the opposing view" still collapses all five steps into one opaque forward pass. Agent separation forces each step to produce a traceable artifact. The advocate, skeptic, and synthesizer are not characters — they are the five cognitive operations made explicit.
+### Multi-agent loop, not a single model with better prompting — status: not confirmed
+This was the original thesis, and the argument still holds in principle: agent separation forces each step to produce a traceable artifact, rather than collapsing five cognitive operations into one opaque forward pass. But it's a claim that has to earn itself against measurement, not just argument, and Phase 6's real eval (n=10, real Claude calls, real PubMed retrieval) found debate did not measurably outperform a single well-prompted call. That's why `/debate` defaults to single_call now (see [Default reasoning path](#default-reasoning-path-updated-2026-08-11)) rather than this pipeline. The debate pipeline stays, at `/debate/multi-agent`, as the eval harness's subject — the question this section poses is still open, not answered no, and the harness is how it gets re-tested rather than re-argued.
 
 ### Custom agent loop, not LangChain
 Provenance tracing is the core product. LangChain hides agent decisions inside abstractions you don't control. A custom loop gives you the exact artifact at every step — which is what you need to write lineage you can query later.

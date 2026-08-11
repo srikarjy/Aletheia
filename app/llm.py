@@ -130,6 +130,14 @@ def _mock_tool_response(tool_name: str, prompt: str) -> dict:
             "cited_pmids": ["38765432", "35987654", "37123456", "34876543"],
             "confidence": 0.4
         }
+    elif tool_name == "resolve_claim":
+        return {
+            "conclusion": "The evidence for BRCA1 mutations increasing pancreatic cancer risk is mixed. Initial associations (RR 2.26) attenuate substantially after adjusting for BRCA2 co-occurrence (adjusted RR 1.34, CI 0.87-2.06), and a prospective cohort found no significant association after adjustment (adjusted HR 0.89, CI 0.45-1.76). However, both adjusted estimates have wide confidence intervals compatible with a real effect, and familial enrichment (p=0.003) is a positive signal not fully explained by the null findings.",
+            "verdict": "unresolved",
+            "confidence": 0.5,
+            "confidence_rationale": "Anchor B applies: the retrieved evidence genuinely conflicts on the central claim. PMID 38765432's adjusted RR (1.34, CI 0.87-2.06) and PMID 37123456's adjusted HR (0.89, CI 0.45-1.76) both have confidence intervals wide enough to be compatible with a real effect, not a true null — this is imprecision, not evidence of absence. PMID 35987654's familial enrichment (p=0.003) is a positive signal the null findings don't explain away. Neither the positive nor the null evidence can be dismissed as invalid, so this is a genuine unresolved conflict, not a case for anchor C or D.",
+            "cited_pmids": ["38765432", "35987654", "37123456"]
+        }
     else:
         return {}
 
