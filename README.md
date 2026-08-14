@@ -6,6 +6,8 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 
 **This is a research prototype, not a medical or clinical decision-making tool.** Outputs are LLM-generated reasoning over retrieved abstracts and are not validated for accuracy — see [Results & Limitations](#results--limitations) below before drawing any conclusion from its output about an actual health claim.
 
+**Live demo:** [srikarjy025-aletheia.hf.space](https://srikarjy025-aletheia.hf.space) (password-protected — request access). Runs real Claude Sonnet 4.5 reasoning against a curated fixture evidence set (live PubMed retrieval via the bundled Biolab MCP server works in local/Docker deployment but hits an unresolved HF Spaces-runtime-specific failure — see `Dockerfile.hf`).
+
 ---
 
 ## Status (as of 2026-08-13)
