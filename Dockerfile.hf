@@ -59,7 +59,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     supervisor \
     apache2-utils \
+    postgresql \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# pgvector as Debian's own packaged binary, not a from-source build -- an
+# earlier attempt building pgvector v0.8.6 from source against
+# postgresql-server-dev-all segfaulted on CREATE EXTENSION vector on this
+# image's aarch64 base every time (verified: correct pg_config, correct
+# extension/lib paths, matching postgres version -- the crash was in
+# vector.so itself, not a misconfiguration). The Debian-packaged build for
+# the exact installed postgres major version sidesteps whatever that was.
+# The package name is version-pinned by Debian (postgresql-<N>-pgvector),
+# so the major version is resolved from whatever `postgresql` just installed
+# rather than hardcoded, in case the base image's Debian release changes.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends "postgresql-$(ls /usr/lib/postgresql | head -1)-pgvector" \
+    && rm -rf /var/lib/apt/lists/*
+
+# HF Spaces has no managed Postgres and the free tier has no persistent
+# volume, so this bundles Postgres+pgvector in the same container as a
+# supervisord-managed process (see supervisord.conf, docker/hf-entrypoint.sh)
+# rather than depending on an external DB. Data does not survive a Space
+# restart -- acceptable for a demo, not for anything meant to persist.
+ENV PGDATA=/var/lib/postgresql/data
+ENV PG_BIN=/usr/lib/postgresql/current/bin
+ENV DATABASE_URL=postgresql://aletheia:aletheia@localhost:5432/aletheia
+# Symlink around the installed major version number so PG_BIN, this image's
+# entrypoint, and supervisord.conf don't need to agree on one.
+RUN ln -s /usr/lib/postgresql/$(ls /usr/lib/postgresql | head -1) /usr/lib/postgresql/current
 
 WORKDIR /app
 
