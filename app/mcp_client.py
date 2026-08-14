@@ -354,9 +354,14 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout
             "into mock data."
         )
 
-    # Real Biolab MCP call with timeout
+    # Real Biolab MCP call with timeout. Local dev spawns Biolab's own venv
+    # (sibling checkout, its own dependency set). A container that bundles
+    # Biolab into the same image has no such venv -- BIOLAB_PYTHON_BIN lets
+    # that deployment point at the single interpreter both packages share
+    # instead of the sibling-repo convention.
+    biolab_python = os.environ.get("BIOLAB_PYTHON_BIN", f"{biolab_path}/.venv/bin/python")
     params = StdioServerParameters(
-        command=f"{biolab_path}/.venv/bin/python",
+        command=biolab_python,
         args=["-m", "biolab.server"],
         cwd=biolab_path,
         env={

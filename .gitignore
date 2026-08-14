@@ -13,3 +13,7 @@ eval_results/
 .ruff_cache/
 .mypy_cache/
 *.db
+
+# Populated at deploy time from the sibling Biolab checkout, see biolab_vendor/README.md
+biolab_vendor/*
+!biolab_vendor/README.md

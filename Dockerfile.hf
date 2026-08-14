@@ -14,20 +14,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Poetry
-RUN pip install --no-cache-dir poetry==1.8.3
+# Install Poetry. pyproject.toml uses the PEP 621 [project] table
+# (requires poetry-core>=2.0.0) -- Poetry 1.x's CLI can't read package
+# metadata from that format ("required fields" error at `poetry install`),
+# so this needs a 2.x CLI, not 1.8.3.
+RUN pip install --no-cache-dir poetry==2.4.1
 
 # Copy Python dependency files
 COPY pyproject.toml poetry.lock ./
 
-# Install Python dependencies
+# Install Python dependencies only, not the project itself as a package --
+# app/ is run directly (like the plain Dockerfile's pip install does), and
+# poetry would otherwise require README.md (pyproject.toml's declared
+# package readme) to be copied in before this step just to install a
+# package we never import as one.
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --only main
+    && poetry install --no-interaction --no-ansi --only main --no-root
 
 # Copy application code
 COPY app/ ./app/
 COPY db/ ./db/
 COPY scripts/ ./scripts/
+
+# Bundled Biolab MCP server (real PubMed retrieval for the public demo).
+# biolab_vendor/ is empty in a plain checkout (see biolab_vendor/README.md) --
+# scripts/deploy_hf_space.sh populates it from the sibling Biolab checkout
+# before building for an actual HF Space push. An empty directory still
+# COPYs and pip-installs fine, it just means BIOLAB_PROJECT_PATH won't
+# resolve to a real server, which search_pubmed already treats as a hard
+# failure rather than a silent mock fallback (see app/mcp_client.py).
+COPY biolab_vendor/ ./biolab_vendor/
+RUN if [ -f biolab_vendor/requirements.txt ]; then pip install --no-cache-dir -r biolab_vendor/requirements.txt; fi
 
 # Build frontend
 COPY frontend/ ./frontend/
@@ -41,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     nginx \
     supervisor \
+    apache2-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -51,7 +69,14 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/db ./db
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/biolab_vendor ./biolab_vendor
 COPY --from=builder /app/pyproject.toml /app/poetry.lock ./
+
+# Bundled Biolab spawns with this image's own interpreter, not a sibling
+# repo's .venv (see app/mcp_client.py's BIOLAB_PYTHON_BIN).
+ENV BIOLAB_PROJECT_PATH=/app/biolab_vendor
+ENV BIOLAB_PYTHON_BIN=/usr/local/bin/python
+ENV BIOLAB_DB_PATH=/app/biolab_vendor/biolab.db
 
 # Copy built frontend
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html
@@ -62,8 +87,12 @@ COPY frontend/nginx.hf.conf /etc/nginx/conf.d/default.conf
 # Copy supervisor config
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
+# Entrypoint gates the demo behind Basic Auth before starting nginx+uvicorn
+# (see docker/hf-entrypoint.sh -- this app has no other auth or rate limiting).
+COPY docker/hf-entrypoint.sh /usr/local/bin/hf-entrypoint.sh
+RUN chmod +x /usr/local/bin/hf-entrypoint.sh
+
 # Expose HF Spaces port
 EXPOSE 7860
 
-# Run supervisor (starts nginx + uvicorn)
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+CMD ["/usr/local/bin/hf-entrypoint.sh"]
