@@ -17,7 +17,7 @@ class TestPhase5Evaluation:
             assert hasattr(claim, 'category')
             assert hasattr(claim, 'rationale')
             assert hasattr(claim, 'expected_verdict')
-            assert claim.category in ["conflicting", "ground_truth"]
+            assert claim.category in ["conflicting", "ground_truth", "unresolved"]
             assert claim.expected_verdict in ["supported", "refuted", "unresolved"]
 
     def test_eval_claims_have_diverse_categories(self):

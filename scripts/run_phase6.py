@@ -164,6 +164,25 @@ def mechanical_unsupported_check(answer: str, cited_pmids: list[str], provenance
     }
 
 
+def _load_abstracts(paper_ids: list[str]) -> dict[str, str]:
+    """Look up stored abstract text for paper_ids from the embeddings table
+    (content column), so a judge call can be given the same evidence quality
+    for debate as it gets for baseline instead of blank strings."""
+    if not paper_ids:
+        return {}
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT ON (paper_id) paper_id, content FROM embeddings "
+                "WHERE paper_id = ANY(%s) ORDER BY paper_id, created_at DESC",
+                (paper_ids,),
+            )
+            return {paper_id: content for paper_id, content in cur.fetchall()}
+    finally:
+        conn.close()
+
+
 async def llm_judge_citation_accuracy(claim: str, answer: str, cited_pmids: list[str], papers: list[dict]) -> dict:
     """LLM-judge: does cited paper actually support the specific assertion?"""
 
@@ -287,12 +306,26 @@ async def main() -> None:
             print(f"    Judge failed: {e}")
             judge_baseline = {"overall_accuracy": 0.0, "evaluations": []}
 
-        # LLM-judge for debate (synthesizer)
+        # LLM-judge for debate (synthesizer). Abstracts are looked up from the
+        # embeddings table (populated during the debate run this compares
+        # against) so the judge sees the same evidence quality it saw for
+        # baseline -- judging with blank abstracts silently made debate's
+        # citation_accuracy uncomparable to baseline's.
         print(f"  Judging debate citations for {cid}...")
+        debate_paper_ids = [s["paper_id"] for s in debate["sources"]]
+        abstracts_by_id = _load_abstracts(debate_paper_ids)
+        missing = [pid for pid in debate_paper_ids if pid not in abstracts_by_id]
+        if missing:
+            raise RuntimeError(
+                f"{cid}: no stored abstract found for paper_id(s) {missing} in the "
+                f"embeddings table -- refusing to judge debate citation accuracy "
+                f"against blank text. Re-run the debate arm so its papers are "
+                f"persisted, or check DATABASE_URL points at the right database."
+            )
         try:
             judge_debate = await llm_judge_citation_accuracy(
                 claim_obj.claim, debate["conclusion"], debate["driving_provenance_ids"],
-                [{"pmid": s["paper_id"], "title": s["title"], "abstract": ""} for s in debate["sources"]]
+                [{"pmid": s["paper_id"], "title": s["title"], "abstract": abstracts_by_id[s["paper_id"]]} for s in debate["sources"]]
             )
         except Exception as e:
             print(f"    Judge failed: {e}")

@@ -177,6 +177,106 @@ MOCK_PAPERS = {
             "abstract": "16,608 postmenopausal women (mean age 63) randomized to CEE+MPA vs placebo. Increased: breast cancer (HR 1.26), CHD (HR 1.29), stroke (HR 1.41), VTE (HR 2.13). Decreased: colorectal cancer (HR 0.63), hip fracture (HR 0.66). Led to dramatic practice change.",
         },
     ],
+    "vitamin_c": [
+        {
+            "pmid": "39803741",
+            "retrieval_id": "mock_retrieval_050",
+            "title": "Vitamin C for preventing and treating the common cold: Cochrane systematic review",
+            "abstract": "29 trial comparisons (n=11,306) of regular vitamin C supplementation (≥200mg/day) in the general population. No reduction in cold incidence (pooled RR 0.97, 95% CI 0.94-1.00). Duration of colds modestly reduced (8% in adults, 14% in children). Five trials in marathon runners/skiers/soldiers under heavy short-term physical stress showed incidence halved (RR 0.48, 95% CI 0.35-0.64) — this subgroup effect does not generalize to the ordinary population.",
+        },
+        {
+            "pmid": "40381012",
+            "retrieval_id": "mock_retrieval_051",
+            "title": "Therapeutic vitamin C after cold onset: randomized trials",
+            "abstract": "8 trials of vitamin C initiated after symptom onset (n=3,249). No consistent effect on symptom duration or severity (pooled difference in duration: -0.2 days, 95% CI -0.6 to 0.2). No support for vitamin C as a treatment once a cold has started.",
+        },
+        {
+            "pmid": "33193359",
+            "retrieval_id": "mock_retrieval_052",
+            "title": "Vitamin C megadose trials and common cold incidence in general adult population",
+            "abstract": "Community-based RCT, 2,006 adults randomized to vitamin C 1g/day vs placebo over one winter season. No difference in cold incidence (32.4% vs 33.1%, RR 0.98, 95% CI 0.89-1.08). Confirms null effect for prevention in ordinary, non-strenuous-exercise populations.",
+        },
+    ],
+    "antioxidant": [
+        {
+            "pmid": "42611234",
+            "retrieval_id": "mock_retrieval_060",
+            "title": "Antioxidant supplements for prevention of mortality in healthy participants and patients with various diseases: Cochrane systematic review",
+            "abstract": "78 RCTs (n=296,707) of beta-carotene, vitamin A, vitamin C, vitamin E, and selenium, alone or combined. No evidence of reduced all-cause mortality for primary or secondary prevention (RR 1.02, 95% CI 1.00-1.05). Beta-carotene (RR 1.05, 95% CI 1.01-1.09) and vitamin E (RR 1.03, 95% CI 1.00-1.05) were each associated with significantly *increased* mortality in subgroup analyses.",
+        },
+        {
+            "pmid": "41902345",
+            "retrieval_id": "mock_retrieval_061",
+            "title": "Beta-carotene supplementation and lung cancer/mortality risk: CARET and ATBC trials",
+            "abstract": "Two large RCTs (CARET n=18,314 smokers/asbestos-exposed; ATBC n=29,133 male smokers) stopped early. Beta-carotene supplementation increased lung cancer incidence (RR 1.28, 95% CI 1.04-1.57) and total mortality (RR 1.17, 95% CI 1.03-1.33) versus placebo.",
+        },
+        {
+            "pmid": "40765432",
+            "retrieval_id": "mock_retrieval_062",
+            "title": "High-dose vitamin E supplementation and all-cause mortality: dose-response meta-analysis",
+            "abstract": "19 RCTs examining vitamin E doses from 16.5 to 2000 IU/day. Doses ≥400 IU/day associated with increased all-cause mortality (RR 1.04, 95% CI 1.01-1.07). No dose showed a protective effect on mortality.",
+        },
+    ],
+    "glucosamine": [
+        {
+            "pmid": "42549386",
+            "retrieval_id": "mock_retrieval_070",
+            "title": "Rotta-brand glucosamine sulfate for osteoarthritis pain: patented-formulation RCTs",
+            "abstract": "Trials using the patented crystalline glucosamine sulfate formulation (Rotta) show clinically meaningful pain and function improvement vs placebo (WOMAC pain reduction ~20%, effect size 0.35-0.45). Consistent across three independent Rotta-sponsored trials with adequate allocation concealment.",
+        },
+        {
+            "pmid": "42539490",
+            "retrieval_id": "mock_retrieval_071",
+            "title": "Non-Rotta glucosamine preparations for osteoarthritis: Cochrane review pooled analysis",
+            "abstract": "Trials using non-Rotta (generic) glucosamine preparations, and trials with unclear/inadequate allocation concealment regardless of brand, show no clinically important pain reduction vs placebo (WOMAC pain difference not exceeding the minimal clinically important difference). Higher-quality-allocation trials overall trend toward null.",
+        },
+        {
+            "pmid": "42483134",
+            "retrieval_id": "mock_retrieval_072",
+            "title": "Glucosamine plus chondroitin combination therapy: GAIT trial subgroup analysis",
+            "abstract": "1,583 knee osteoarthritis patients randomized to glucosamine, chondroitin, combination, celecoxib, or placebo. No significant overall effect for glucosamine alone. Post-hoc subgroup (moderate-to-severe pain) showed benefit for the combination, but the trial was not powered for this subgroup and glucosamine's independent contribution cannot be isolated.",
+        },
+    ],
+    "probiotics": [
+        {
+            "pmid": "41287654",
+            "retrieval_id": "mock_retrieval_080",
+            "title": "Probiotics for the prevention of pediatric antibiotic-associated diarrhea: Cochrane systematic review",
+            "abstract": "33 RCTs (n=6,352) of children (0-18 years) receiving antibiotics, randomized to probiotics vs placebo/no treatment. Probiotics reduced AAD incidence from 19% to 8% (RR 0.45, 95% CI 0.36-0.55), a moderate and consistent protective effect. Effect strongest at doses ≥5 billion CFU/day; no serious adverse events attributable to probiotics.",
+        },
+        {
+            "pmid": "40998765",
+            "retrieval_id": "mock_retrieval_081",
+            "title": "Lactobacillus rhamnosus GG for prevention of antibiotic-associated diarrhea in children",
+            "abstract": "Multicenter RCT, 600 children on antibiotics randomized to L. rhamnosus GG (1×10^10 CFU/day) vs placebo. AAD incidence 8% vs 22% (RR 0.36, 95% CI 0.23-0.55). Effect consistent across antibiotic classes.",
+        },
+        {
+            "pmid": "39876543",
+            "retrieval_id": "mock_retrieval_082",
+            "title": "Dose-response relationship of probiotics for pediatric AAD prevention: meta-regression",
+            "abstract": "Meta-regression across 28 pediatric trials found a significant dose-response relationship: high-dose probiotics (≥5 billion CFU/day) reduced AAD risk by 53%, while low-dose (<5 billion CFU/day) showed a smaller, still-significant 29% reduction.",
+        },
+    ],
+    "statins": [
+        {
+            "pmid": "41567890",
+            "retrieval_id": "mock_retrieval_090",
+            "title": "Statins for primary prevention of cardiovascular disease and all-cause mortality: systematic review and meta-analysis",
+            "abstract": "18 RCTs (n=56,934) of statin therapy in primary prevention populations (no prior cardiovascular disease). All-cause mortality reduced (RR 0.92, 95% CI 0.87-0.96), driven primarily by trials with baseline LDL ≥3.5 mmol/L or high-risk populations. Effect present but smaller in lower-baseline-risk subgroups.",
+        },
+        {
+            "pmid": "40456789",
+            "retrieval_id": "mock_retrieval_091",
+            "title": "JUPITER trial: rosuvastatin in primary prevention with elevated CRP",
+            "abstract": "17,802 healthy adults with LDL <130 mg/dL but elevated hs-CRP randomized to rosuvastatin 20mg vs placebo. Trial stopped early: all-cause mortality reduced (HR 0.80, 95% CI 0.67-0.97). Major cardiovascular events reduced by 44%.",
+        },
+        {
+            "pmid": "39234567",
+            "retrieval_id": "mock_retrieval_092",
+            "title": "Statins in primary prevention for low-risk individuals: pooled trial analysis",
+            "abstract": "Pooled analysis restricted to trial participants with <10% 10-year cardiovascular risk (n=14,220 of the larger primary-prevention pool). All-cause mortality reduction was smaller and did not reach statistical significance in isolation (RR 0.96, 95% CI 0.88-1.05), though point estimates remained directionally consistent with the full high-volume pooled result.",
+        },
+    ],
 }
 
 
@@ -194,9 +294,26 @@ def _get_mock_papers(query: str) -> list[dict[str, Any]]:
         return MOCK_PAPERS["omega3"]
     elif "hormone" in query_lower or "hrt" in query_lower or "menopausal" in query_lower:
         return MOCK_PAPERS["hrt"]
+    elif "vitamin c" in query_lower or "common cold" in query_lower:
+        return MOCK_PAPERS["vitamin_c"]
+    elif "antioxidant" in query_lower or "beta-carotene" in query_lower or "beta carotene" in query_lower:
+        return MOCK_PAPERS["antioxidant"]
+    elif "glucosamine" in query_lower:
+        return MOCK_PAPERS["glucosamine"]
+    elif "probiotic" in query_lower:
+        return MOCK_PAPERS["probiotics"]
+    elif "statin" in query_lower:
+        return MOCK_PAPERS["statins"]
     else:
-        # Default to BRCA1 papers for unknown queries
-        return MOCK_PAPERS["brca1"]
+        # Mock mode has no real retrieval to fall back to -- returning an
+        # unrelated topic's papers would silently corrupt whatever eval or
+        # debate consumes them (see search_pubmed's real-mode misconfiguration
+        # policy above: a hard failure here, not a wrong answer).
+        raise RuntimeError(
+            f"No mock papers configured for query {query!r}. Add a fixture set "
+            f"and keyword route to MOCK_PAPERS / _get_mock_papers, or set "
+            f"MOCK_RETRIEVAL=false to use real retrieval."
+        )
 
 
 async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout: float = 30.0) -> dict:

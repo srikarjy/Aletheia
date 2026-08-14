@@ -117,7 +117,7 @@ async def get_batch_status(batch_id: str) -> BatchJobResponse:
 
 @router.post("/eval/run")
 async def run_full_eval(background_tasks: BackgroundTasks) -> dict:
-    """Run the full 5-claim evaluation set (Phase 5)."""
+    """Run the full curated evaluation set (Phase 5+)."""
     claims = get_all_claims()
     claim_strings = [c.claim for c in claims]
     
@@ -145,7 +145,7 @@ async def run_full_eval(background_tasks: BackgroundTasks) -> dict:
 
 @router.get("/eval/claims")
 async def list_eval_claims() -> dict:
-    """List the 5 curated evaluation claims with metadata."""
+    """List the curated evaluation claims with metadata."""
     claims = get_all_claims()
     return {
         "claims": [

@@ -36,17 +36,18 @@ import psycopg
 from app.embeddings import embed
 from app.llm import call_tool, _client as llm_client
 from app.mcp_client import search_pubmed
-from app.prompts import prompt_hash
+from app.prompts import CONFIDENCE_RUBRIC_V1, prompt_hash
 
 MODEL = "claude-sonnet-4-5"
 AGENT_ID = "aletheia:single_call"
 
-# Rubric v1, unchanged from SYNTHESIZER_PROMPT_TEMPLATE (see prompts.py's
-# comment on why it's frozen) -- reproduced here rather than imported+sliced
-# because the debate version's Step 1 is written in terms of "the skeptic's
-# challenges," which doesn't exist in a single pass. The anchors (A-D) and
-# what each means are otherwise identical, so scores from either path stay
-# comparable, which is the property the eval harness depends on.
+# Rubric v1, imported verbatim from app.prompts.CONFIDENCE_RUBRIC_V1 (see that
+# module's comment on why it's frozen) rather than hand-copied here, so an edit
+# to the rubric applies to both reasoning paths by construction instead of
+# risking silent drift between two copies. Only the Step 1 framing differs --
+# this path has no skeptic, so it's phrased as a self-directed contradiction
+# screen -- the anchors (A-D) are identical, which is the property the eval
+# harness's comparison depends on.
 SINGLE_CALL_PROMPT_TEMPLATE = """You are evaluating a scientific claim against retrieved evidence. Build the case for the claim, actively look for evidence that conflicts with it or with other retrieved papers, then resolve to a conclusion and confidence following the rubric below exactly.
 
 Claim: {claim}
@@ -54,20 +55,9 @@ Claim: {claim}
 Retrieved evidence:
 {evidence_block}
 
-CONFIDENCE RUBRIC v1
-
-"confidence" means: the degree to which the claim is supported by the evidence above, after actively checking for conflicting or contradicting evidence among the retrieved papers. It is NOT a probability that the claim is true in the world.
-
-Step 1 — contradiction screen. Check whether any retrieved paper conflicts with another, or conflicts with the claim itself, or is too weak a study type / too small a sample to support what's being claimed. Only count a weakness if it's actually present in the cited text, not a hypothetical concern.
-
-Step 2 — place the claim against the anchors, using only real weaknesses found in Step 1:
-
-  A. A real weakness directly undermines the central evidence for the claim (e.g. the key citation does not say what it's being used to support) → confidence <= 0.3
-  B. Retrieved papers genuinely conflict on the central claim and neither side is invalidated → confidence 0.4-0.6, verdict "unresolved" — state explicitly that the conflict could not be resolved.
-  C. Real weaknesses exist but touch only peripheral points; the central citations hold → confidence 0.5-0.7
-  D. No real substantive weaknesses and the central citations hold up → confidence >= 0.8
-
-Anchors are cases, not a partition: where bands overlap (0.5-0.6), the verdict distinguishes them. Values in the gaps (0.3-0.4, 0.7-0.8) are allowed only by naming the nearest anchor and justifying the offset in confidence_rationale.
+""" + CONFIDENCE_RUBRIC_V1.format(
+    validity_screen_step="Step 1 — contradiction screen. Check whether any retrieved paper conflicts with another, or conflicts with the claim itself, or is too weak a study type / too small a sample to support what's being claimed. Only count a weakness if it's actually present in the cited text, not a hypothetical concern."
+) + """
 
 If the evidence doesn't actually support the claim, or is too thin to judge, say so honestly in conclusion rather than overstating it.
 

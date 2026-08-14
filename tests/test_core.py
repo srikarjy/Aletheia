@@ -257,10 +257,10 @@ class TestMCPClient:
         """search_pubmed respects max_results parameter."""
         from app.mcp_client import search_pubmed
         
-        result = await search_pubmed("test", "test:agent", 2)
+        result = await search_pubmed("brca1", "test:agent", 2)
         assert len(result["papers"]) == 2
-        
-        result = await search_pubmed("test", "test:agent", 10)
+
+        result = await search_pubmed("brca1", "test:agent", 10)
         assert len(result["papers"]) == 5
 
     @pytest.mark.asyncio
@@ -340,7 +340,7 @@ class TestMCPClientSchemas:
         from app.mcp_client import search_pubmed
         
         import asyncio
-        result = asyncio.run(search_pubmed("test", "test:agent", 1))
+        result = asyncio.run(search_pubmed("brca1", "test:agent", 1))
         
         assert "query_echo" in result
         assert "papers" in result
