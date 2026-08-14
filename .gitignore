@@ -12,3 +12,4 @@ eval_results/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+*.db

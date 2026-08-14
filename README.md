@@ -8,7 +8,7 @@ A multi-agent scientific reasoning system where AI agents with distinct epistemi
 
 ---
 
-## Status (as of 2026-07-15)
+## Status (as of 2026-08-13)
 
 **Phases 0–6 of 7 are done, each verified against real data, real APIs, and a real database.**
 
@@ -144,8 +144,6 @@ The thesis of Aletheia is that debate reduces unsupported claims vs a single-mod
 
 **What this project actually demonstrates:** a working multi-agent architecture with real provenance tracking, a citation-integrity constraint that mechanically rejects unvalidated citations before they reach a user, and an eval harness that measured its own central thesis against externally-cited ground truth and reported a clear, unfavorable, cost-quantified result rather than a hedge. It does not currently demonstrate that debate improves evidence synthesis over a single well-prompted model — at n=10 it demonstrates the opposite, and that's the number to lead with, not around.
 
-**What this project actually demonstrates:** a working multi-agent architecture with real provenance tracking, a citation-integrity constraint that mechanically rejects unvalidated citations before they reach a user, and an eval harness that measures its own central thesis and reports the result even when unfavorable — now against an externally-verifiable ground truth instead of a self-graded one. It does not currently demonstrate that debate improves evidence synthesis over a single well-prompted model — that remains an open, disconfirmed-so-far question pending a full run against the expanded eval set.
-
 ---
 
 ## Stack
@@ -274,7 +272,7 @@ GET /batch/debate/{batch_id}
 ### Evaluation
 ```bash
 POST /batch/eval/run
-# Runs all 5 curated claims
+# Runs all 10 curated claims
 
 GET /batch/eval/claims
 # Lists the curated claims with metadata
@@ -323,7 +321,7 @@ Aletheia/
 ├── app/
 │   ├── agents/          # Advocate, Skeptic, Synthesizer
 │   ├── batch.py         # Batch processing endpoints
-│   ├── claims.py        # 5 curated evaluation claims
+│   ├── claims.py        # 10 curated, externally-cited evaluation claims
 │   ├── db.py            # Database connection
 │   ├── embeddings.py    # OpenAI embeddings
 │   ├── llm.py           # Forced-tool-use helper
