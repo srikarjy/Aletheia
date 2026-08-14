@@ -103,20 +103,21 @@ COPY --from=builder /app/pyproject.toml /app/poetry.lock ./
 # Bundled Biolab spawns with this image's own interpreter, not a sibling
 # repo's .venv (see app/mcp_client.py's BIOLAB_PYTHON_BIN).
 #
-# KNOWN ISSUE (2026-08-14): this exact image, verified working locally
-# (built + ran + a real search_pubmed call succeeded standalone via
-# `docker run`), fails every retrieval request once actually deployed to
-# an HF Space with "mcp.shared.exceptions.McpError: Connection closed"
-# during the MCP stdio handshake -- the biolab.server subprocess dies
-# before responding. Isolated to this specifically (not Postgres, not
-# uvicorn/nginx/auth, which all work live) by toggling MOCK_RETRIEVAL=true
-# as a Space variable and confirming the rest of the stack works end to
-# end. Not yet root-caused: cpu-basic already has 16GB RAM so it's
-# probably not a memory ceiling; more likely some HF-runtime-specific
-# subprocess/sandboxing restriction not present in local Docker Desktop.
-# Debugging further needs Dev Mode/SSH into the live container, which
-# wasn't available when this was found. Current deployment runs with
-# MOCK_RETRIEVAL=true as a Space variable until this is root-caused.
+# RESOLVED ISSUE (2026-08-14): the first live deploy failed every retrieval
+# request with "ModuleNotFoundError: No module named 'defusedxml'" inside
+# the bundled biolab.server subprocess (visible only in full, untruncated
+# Space run logs -- the app-side error was just "Connection closed", which
+# is why this looked like a Postgres/uvicorn/sandboxing issue at first).
+# Root cause: `hf upload`'s bulk sync silently drops any file matching the
+# repo's own *hosted* .gitignore -- including biolab_vendor/requirements.txt,
+# via this repo's `biolab_vendor/*` rule, which exists only to keep vendored
+# source out of Aletheia's own GitHub history and was never meant to apply
+# to the deploy target. No warning is printed for files skipped this way in
+# a bulk sync (only for explicit single-file uploads). Fixed by uploading a
+# Space-specific .gitignore (no biolab_vendor rule) before uploading the
+# missing file. If a bundled-dependency ModuleNotFoundError shows up again
+# after a redeploy, check `list_repo_files` against what's actually on disk
+# here before assuming it's a runtime/sandboxing problem.
 ENV BIOLAB_PROJECT_PATH=/app/biolab_vendor
 ENV BIOLAB_PYTHON_BIN=/usr/local/bin/python
 ENV BIOLAB_DB_PATH=/app/biolab_vendor/biolab.db
