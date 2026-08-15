@@ -359,6 +359,72 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout
     # Biolab into the same image has no such venv -- BIOLAB_PYTHON_BIN lets
     # that deployment point at the single interpreter both packages share
     # instead of the sibling-repo convention.
+    return await _call_biolab_tool(
+        "search_pubmed",
+        {"query": query, "agent_id": agent_id, "max_results": max_results},
+        timeout=timeout,
+        # A query with genuinely no hits is a real, expected outcome (reason
+        # over "no evidence found"), not a retrieval failure — Biolab reports
+        # it as a tool error, so map it back to an empty result here.
+        empty_marker="no PubMed results",
+        empty_result={"query_echo": query, "papers": []},
+    )
+
+
+async def search_europepmc(query: str, agent_id: str, max_results: int = 5, timeout: float = 30.0) -> dict:
+    """Search Europe PMC (includes preprints) via Biolab. Same grounding and
+    audit-trail properties as search_pubmed. In MOCK_RETRIEVAL mode returns no
+    articles — mock fixtures exist only for PubMed, and inventing supplementary
+    sources would fake breadth the mock run doesn't have."""
+    if os.environ.get("MOCK_RETRIEVAL", "").lower() == "true":
+        return {"query_echo": query, "articles": []}
+    _require_biolab_config()
+    return await _call_biolab_tool(
+        "search_europepmc",
+        {"query": query, "agent_id": agent_id, "max_results": max_results},
+        timeout=timeout,
+        empty_marker="no Europe PMC results",
+        empty_result={"query_echo": query, "articles": []},
+    )
+
+
+async def search_clinicaltrials(query: str, agent_id: str, max_results: int = 5, timeout: float = 30.0) -> dict:
+    """Search ClinicalTrials.gov via Biolab. Returns trial records (NCT id,
+    status, phase) rather than abstracts. A claim with no registered trials is
+    normal, not an error. In MOCK_RETRIEVAL mode returns no studies (see
+    search_europepmc's rationale)."""
+    if os.environ.get("MOCK_RETRIEVAL", "").lower() == "true":
+        return {"query_echo": query, "studies": []}
+    _require_biolab_config()
+    return await _call_biolab_tool(
+        "search_clinicaltrials",
+        {"query": query, "agent_id": agent_id, "max_results": max_results},
+        timeout=timeout,
+        empty_marker="no ClinicalTrials.gov results",
+        empty_result={"query_echo": query, "studies": []},
+    )
+
+
+def _require_biolab_config() -> None:
+    if not os.environ.get("BIOLAB_PROJECT_PATH") or not os.environ.get("BIOLAB_DB_PATH"):
+        raise RuntimeError(
+            "BIOLAB_PROJECT_PATH/BIOLAB_DB_PATH not set and MOCK_RETRIEVAL is not "
+            '"true" -- refusing to silently skip real retrieval.'
+        )
+
+
+async def _call_biolab_tool(
+    tool_name: str,
+    arguments: dict,
+    timeout: float,
+    empty_marker: str,
+    empty_result: dict,
+) -> dict:
+    """Spawn the Biolab MCP server as a stdio subprocess and call one tool.
+    A tool error containing empty_marker means "genuinely zero hits" and maps
+    to empty_result; any other tool error raises."""
+    biolab_path = os.environ["BIOLAB_PROJECT_PATH"]
+    biolab_db_path = os.environ["BIOLAB_DB_PATH"]
     biolab_python = os.environ.get("BIOLAB_PYTHON_BIN", f"{biolab_path}/.venv/bin/python")
     params = StdioServerParameters(
         command=biolab_python,
@@ -376,18 +442,12 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await asyncio.wait_for(
-                session.call_tool(
-                    "search_pubmed",
-                    {"query": query, "agent_id": agent_id, "max_results": max_results},
-                ),
+                session.call_tool(tool_name, arguments),
                 timeout=timeout,
             )
             if result.isError:
                 message = result.content[0].text if result.content else "unknown error"
-                if "no PubMed results" in message:
-                    # A real, expected outcome (the query genuinely has no hits), not a
-                    # retrieval failure — Biolab reports it as a tool error, but the
-                    # debate pipeline should reason over "no evidence found," not crash.
-                    return {"query_echo": query, "papers": []}
-                raise RuntimeError(f"Biolab search_pubmed failed: {message}")
+                if empty_marker in message:
+                    return empty_result
+                raise RuntimeError(f"Biolab {tool_name} failed: {message}")
             return json.loads(result.content[0].text)

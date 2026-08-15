@@ -28,15 +28,19 @@ three-agent structure itself:
     module docstring states for the debate pipeline
 """
 
+import asyncio
 import json
+import logging
 from uuid import UUID
 
 import psycopg
 
 from app.embeddings import embed
 from app.llm import call_tool, _client as llm_client
-from app.mcp_client import search_pubmed
+from app.mcp_client import search_clinicaltrials, search_europepmc, search_pubmed
 from app.prompts import CONFIDENCE_RUBRIC_V1, prompt_hash
+
+logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-5"
 AGENT_ID = "aletheia:single_call"
@@ -52,8 +56,11 @@ SINGLE_CALL_PROMPT_TEMPLATE = """You are evaluating a scientific claim against r
 
 Claim: {claim}
 
-Retrieved evidence:
+Retrieved evidence — published literature (PubMed / Europe PMC):
 {evidence_block}
+
+Retrieved evidence — registered clinical trials (ClinicalTrials.gov):
+{trials_block}
 
 """ + CONFIDENCE_RUBRIC_V1.format(
     validity_screen_step="Step 1 — contradiction screen. Check whether any retrieved paper conflicts with another, or conflicts with the claim itself, or is too weak a study type / too small a sample to support what's being claimed. Only count a weakness if it's actually present in the cited text, not a hypothetical concern."
@@ -61,12 +68,12 @@ Retrieved evidence:
 
 If the evidence doesn't actually support the claim, or is too thin to judge, say so honestly in conclusion rather than overstating it.
 
-confidence_rationale must name the anchor letter applied. cited_pmids must list only PMIDs that appear in the evidence above.
+confidence_rationale must name the anchor letter applied. cited_pmids must list only PMIDs or NCT ids that appear in the evidence above.
 
 signal_breakdown scores how strongly each evidence TYPE present in the retrieval above supports the claim, each in [0,1]. Score only from what the retrieved abstracts actually report — never from background knowledge:
 - literature: breadth and consistency of independent published support across the retrieved papers.
 - protein_evidence: structural, mutagenesis, binding, or other biophysical data reported in the retrieved abstracts. 0.0 if none of the abstracts report any.
-- clinical_evidence: patient outcomes, trial data, or real-world evidence reported in the retrieved abstracts. 0.0 if none report any.
+- clinical_evidence: patient outcomes and trial data — from the registered clinical trial records above and from clinical findings reported in the retrieved abstracts. 0.0 if neither has any.
 - llm_rating: your own self-assessment of this resolution. This is weighted at most 15% downstream, so score it honestly rather than defensively.
 A 0.0 for an absent evidence type is the correct answer, not a failure.
 
@@ -98,7 +105,7 @@ RESOLVE_CLAIM_TOOL = {
             "cited_pmids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "PMIDs from the retrieved evidence that drove the conclusion and confidence.",
+                "description": "PMIDs or NCT ids from the retrieved evidence that drove the conclusion and confidence.",
             },
             "signal_breakdown": {
                 "type": "object",
@@ -147,7 +154,88 @@ def _breakdown_problems(resolution: dict) -> list[str]:
 
 
 def _format_evidence(papers: list[dict]) -> str:
+    if not papers:
+        return "(none retrieved)"
     return "\n\n".join(f"PMID {p['pmid']}: {p['title']}\n{p['abstract']}" for p in papers)
+
+
+# ClinicalTrials.gov's search API does term matching, not semantic matching:
+# a full assertion sentence ("X improves survival in Y") returns zero hits
+# while its content terms ("X Y") hit real trials. Verified against the live
+# API both ways. Deterministic stripping, not an LLM call, per the
+# cost-control principle of routing deterministically wherever possible.
+_TRIALS_QUERY_STOPWORDS = frozenset("""
+a an and are as at be by does for from has have improves improve improved
+increases increase increased reduces reduce reduced causes cause caused
+prevents prevent prevented is in it of on or over survival outcomes outcome
+risk that the to versus vs with within
+""".split())
+
+
+def _trials_query(claim: str) -> str:
+    kept = [w for w in claim.split() if w.lower().strip(".,;:") not in _TRIALS_QUERY_STOPWORDS]
+    # A claim of nothing but assertion language falls back to the raw claim
+    # rather than an empty query, which Biolab rejects.
+    return " ".join(kept) if kept else claim
+
+
+def _format_trials(trials: list[dict]) -> str:
+    if not trials:
+        return "(no registered trials retrieved for this claim)"
+    return "\n".join(
+        f"{t['nct_id']}: {t['title']} [status: {t.get('status', 'unknown')}, phase: {t.get('phase') or 'n/a'}]"
+        for t in trials
+    )
+
+
+async def _retrieve_all(claim: str) -> tuple[list[dict], list[dict], list[str]]:
+    """Retrieve from all sources concurrently. PubMed is the backbone: its
+    failure fails the call. Europe PMC and ClinicalTrials.gov are
+    supplementary: a failure there degrades to fewer sources, but never
+    silently — each degradation is returned as a warning that the caller
+    persists into the audit trail.
+    """
+    pubmed_task = search_pubmed(claim, agent_id=AGENT_ID)
+    epmc_task = search_europepmc(claim, agent_id=AGENT_ID)
+    trials_task = search_clinicaltrials(_trials_query(claim), agent_id=AGENT_ID)
+    pubmed_res, epmc_res, trials_res = await asyncio.gather(
+        pubmed_task, epmc_task, trials_task, return_exceptions=True
+    )
+
+    if isinstance(pubmed_res, BaseException):
+        raise pubmed_res
+
+    warnings: list[str] = []
+    papers = list(pubmed_res["papers"])
+    seen_ids = {p["pmid"] for p in papers}
+    seen_titles = {p["title"].strip().lower() for p in papers}
+
+    if isinstance(epmc_res, BaseException):
+        warnings.append(f"europepmc retrieval failed: {epmc_res}")
+        logger.warning("supplementary retrieval degraded: %s", warnings[-1])
+    else:
+        for a in epmc_res["articles"]:
+            # Europe PMC ids are usually PMIDs; drop anything PubMed already
+            # returned (by id, then by title for id-scheme mismatches).
+            if a["id"] in seen_ids or a["title"].strip().lower() in seen_titles:
+                continue
+            seen_ids.add(a["id"])
+            seen_titles.add(a["title"].strip().lower())
+            papers.append({
+                "pmid": a["id"],
+                "retrieval_id": a["retrieval_id"],
+                "title": a["title"],
+                "abstract": a["abstract"],
+            })
+
+    trials: list[dict] = []
+    if isinstance(trials_res, BaseException):
+        warnings.append(f"clinicaltrials retrieval failed: {trials_res}")
+        logger.warning("supplementary retrieval degraded: %s", warnings[-1])
+    else:
+        trials = list(trials_res["studies"])
+
+    return papers, trials, warnings
 
 
 async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> dict:
@@ -155,8 +243,7 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
     a dict shaped like synthesizer()'s + advocate()'s combined output plus
     "papers", so main.py can build a DebateResponse the same way it does
     for the multi-agent pipeline."""
-    result = await search_pubmed(claim, agent_id=AGENT_ID)
-    papers = result["papers"]
+    papers, trials, retrieval_warnings = await _retrieve_all(claim)
 
     pmid_to_provenance_id: dict[str, int] = {}
     with conn.cursor() as cur:
@@ -187,10 +274,36 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
                 ),
             )
             pmid_to_provenance_id[paper["pmid"]] = cur.fetchone()[0]
+        # Trial records get provenance rows too (same audit invariant as
+        # papers) but no embeddings row -- there is no abstract to embed.
+        for trial in trials:
+            cur.execute(
+                "INSERT INTO provenance "
+                "(debate_id, claim, agent, action, source_paper_id, retrieval_id, detail) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    str(debate_id),
+                    claim,
+                    "single_call",
+                    "retrieve",
+                    trial["nct_id"],
+                    trial["retrieval_id"],
+                    json.dumps({
+                        "title": trial["title"],
+                        "status": trial.get("status"),
+                        "phase": trial.get("phase"),
+                        "record_type": "clinical_trial",
+                    }),
+                ),
+            )
+            pmid_to_provenance_id[trial["nct_id"]] = cur.fetchone()[0]
     conn.commit()
 
     evidence_block = _format_evidence(papers)
-    prompt = SINGLE_CALL_PROMPT_TEMPLATE.format(claim=claim, evidence_block=evidence_block)
+    trials_block = _format_trials(trials)
+    prompt = SINGLE_CALL_PROMPT_TEMPLATE.format(
+        claim=claim, evidence_block=evidence_block, trials_block=trials_block
+    )
     valid_pmids = set(pmid_to_provenance_id)
 
     resolution = call_tool(
@@ -209,8 +322,8 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
         correction = "\n\nCORRECTION:"
         if bad:
             correction += (
-                f" cited_pmids {bad} are not PMIDs from the retrieved evidence "
-                f"above. Valid PMIDs are {sorted(valid_pmids)}. Resubmit citing only those."
+                f" cited_pmids {bad} are not PMIDs/NCT ids from the retrieved evidence "
+                f"above. Valid ids are {sorted(valid_pmids)}. Resubmit citing only those."
             )
         if breakdown_problems:
             correction += (
@@ -252,7 +365,7 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
                 "single_call",
                 "conclude",
                 None,
-                json.dumps(resolution),
+                json.dumps({**resolution, "retrieval_warnings": retrieval_warnings}),
                 prompt_hash(SINGLE_CALL_PROMPT_TEMPLATE),
             ),
         )
@@ -266,4 +379,6 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
         "signal_breakdown": resolution["signal_breakdown"],
         "driving_provenance_ids": driving_provenance_ids,
         "papers": papers,
+        "trials": trials,
+        "retrieval_warnings": retrieval_warnings,
     }
