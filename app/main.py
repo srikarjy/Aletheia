@@ -106,7 +106,14 @@ async def run_synthesis_pipeline(claim: str, debate_id: str) -> DebateResponse:
     ]
 
     sources = [
-        Source(paper_id=p["pmid"], title=p["title"], used_by=["single_call"])
+        Source(
+            paper_id=p["pmid"],
+            title=p["title"],
+            used_by=["single_call"],
+            retracted=bool(p.get("retracted")),
+            concern=bool(p.get("concern")),
+            retraction_notice=p.get("retraction_notice"),
+        )
         for p in result["papers"]
     ] + [
         # Trial records are sources too — paper_id carries the NCT id, which

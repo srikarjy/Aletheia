@@ -31,18 +31,29 @@ three-agent structure itself:
 import asyncio
 import json
 import logging
+import os
 from uuid import UUID
 
 import psycopg
 
 from app.embeddings import embed
 from app.llm import call_tool, _client as llm_client
-from app.mcp_client import search_clinicaltrials, search_europepmc, search_pubmed
+from app.mcp_client import (
+    check_retractions,
+    search_clinicaltrials,
+    search_europepmc,
+    search_pubmed,
+)
 from app.prompts import CONFIDENCE_RUBRIC_V1, prompt_hash
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-5"
+# ALETHEIA_MODEL lets a deployment pick its cost point without a code change:
+# e.g. claude-haiku-4-5 runs at roughly a third of Sonnet-tier token pricing --
+# the difference between a demo a grad student can leave running and one they
+# can't. The default stays what the Phase 6 eval measured, so results remain
+# comparable unless a deployment explicitly opts into a different model.
+MODEL = os.environ.get("ALETHEIA_MODEL", "claude-sonnet-4-5")
 AGENT_ID = "aletheia:single_call"
 
 # Rubric v1, imported verbatim from app.prompts.CONFIDENCE_RUBRIC_V1 (see that
@@ -66,7 +77,7 @@ Retrieved evidence — registered clinical trials (ClinicalTrials.gov):
     validity_screen_step="Step 1 — contradiction screen. Check whether any retrieved paper conflicts with another, or conflicts with the claim itself, or is too weak a study type / too small a sample to support what's being claimed. Only count a weakness if it's actually present in the cited text, not a hypothetical concern."
 ) + """
 
-If the evidence doesn't actually support the claim, or is too thin to judge, say so honestly in conclusion rather than overstating it.
+If the evidence doesn't actually support the claim, or is too thin to judge, say so honestly in conclusion rather than overstating it. A paper marked [RETRACTED] is invalid evidence: never count it as support, treat any claim resting mainly on it as unsupported, and reflect that in both confidence and signal_breakdown. Treat [EXPRESSION OF CONCERN] as a serious credibility weakness in the contradiction screen.
 
 confidence_rationale must name the anchor letter applied. cited_pmids must list only PMIDs or NCT ids that appear in the evidence above.
 
@@ -156,7 +167,16 @@ def _breakdown_problems(resolution: dict) -> list[str]:
 def _format_evidence(papers: list[dict]) -> str:
     if not papers:
         return "(none retrieved)"
-    return "\n\n".join(f"PMID {p['pmid']}: {p['title']}\n{p['abstract']}" for p in papers)
+    parts = []
+    for p in papers:
+        flag = ""
+        if p.get("retracted"):
+            notice = f" (retraction notice: {p['retraction_notice']})" if p.get("retraction_notice") else ""
+            flag = f" [RETRACTED{notice} -- this paper has been formally retracted and must not be cited as valid support]"
+        elif p.get("concern"):
+            flag = " [EXPRESSION OF CONCERN -- the journal has issued a formal editorial warning about this paper]"
+        parts.append(f"PMID {p['pmid']}: {p['title']}{flag}\n{p['abstract']}")
+    return "\n\n".join(parts)
 
 
 # ClinicalTrials.gov's search API does term matching, not semantic matching:
@@ -234,6 +254,24 @@ async def _retrieve_all(claim: str) -> tuple[list[dict], list[dict], list[str]]:
         logger.warning("supplementary retrieval degraded: %s", warnings[-1])
     else:
         trials = list(trials_res["studies"])
+
+    # Retraction screen on every retrieved paper. A failed check degrades
+    # with an audited warning (same policy as supplementary sources) -- flags
+    # then stay unset, meaning "unknown", never "verified clean".
+    numeric_pmids = [p["pmid"] for p in papers if str(p["pmid"]).isdigit()]
+    if numeric_pmids:
+        try:
+            res = await check_retractions(numeric_pmids, agent_id=AGENT_ID)
+            status_by_pmid = {s["pmid"]: s for s in res["statuses"]}
+            for p in papers:
+                s = status_by_pmid.get(str(p["pmid"]))
+                if s:
+                    p["retracted"] = bool(s["retracted"])
+                    p["concern"] = bool(s["concern"])
+                    p["retraction_notice"] = s.get("notice") or None
+        except Exception as e:
+            warnings.append(f"retraction check failed: {e}")
+            logger.warning("retraction screen degraded: %s", warnings[-1])
 
     return papers, trials, warnings
 

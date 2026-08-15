@@ -27,6 +27,12 @@ class Source(BaseModel):
     paper_id: str
     title: str
     used_by: list[str]
+    # Retraction screen results (PubMed record markers, checked at retrieval
+    # time). False + no notice can also mean the status was unknown (screen
+    # degraded, or a non-PubMed source) -- retracted=True is always real.
+    retracted: bool = False
+    concern: bool = False
+    retraction_notice: str | None = None
 
 
 class SignalBreakdown(BaseModel):

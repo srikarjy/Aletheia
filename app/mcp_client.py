@@ -334,7 +334,10 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout
     """
     # Check for mock mode
     if os.environ.get("MOCK_RETRIEVAL", "").lower() == "true":
-        papers = _get_mock_papers(query)[:max_results]
+        # Copies, not the shared module-level fixtures: callers annotate paper
+        # dicts in place (retraction flags), and mutating the shared objects
+        # would leak state between calls.
+        papers = [dict(p) for p in _get_mock_papers(query)[:max_results]]
         return {"query_echo": query, "papers": papers}
 
     biolab_path = os.environ.get("BIOLAB_PROJECT_PATH")
@@ -402,6 +405,23 @@ async def search_clinicaltrials(query: str, agent_id: str, max_results: int = 5,
         timeout=timeout,
         empty_marker="no ClinicalTrials.gov results",
         empty_result={"query_echo": query, "studies": []},
+    )
+
+
+async def check_retractions(pmids: list[str], agent_id: str, timeout: float = 30.0) -> dict:
+    """Check retraction / Expression-of-Concern status for PubMed papers via
+    Biolab. In MOCK_RETRIEVAL mode returns no statuses -- retraction state
+    cannot be mocked honestly, and callers already treat an absent status as
+    unknown rather than clean."""
+    if os.environ.get("MOCK_RETRIEVAL", "").lower() == "true":
+        return {"statuses": []}
+    _require_biolab_config()
+    return await _call_biolab_tool(
+        "check_retractions",
+        {"pmids": pmids, "agent_id": agent_id},
+        timeout=timeout,
+        empty_marker="pmids must not be empty",
+        empty_result={"statuses": []},
     )
 
 

@@ -331,3 +331,69 @@ def test_trials_query_strips_assertion_language():
     ) == "Vemurafenib BRAF V600E metastatic melanoma"
     # A degenerate all-stopword claim falls back to the raw text, never empty
     assert _trials_query("improves the outcomes") == "improves the outcomes"
+
+
+@pytest.mark.asyncio
+async def test_single_call_flags_retracted_papers(mock_env):
+    conn, cursor = _mock_conn()
+
+    async def fake_retractions(pmids, agent_id, timeout=30.0):
+        return {"statuses": [
+            {"pmid": "38765432", "retracted": True, "concern": False,
+             "notice": "Lancet. 2010 Feb 6;375(9713):445", "notice_pmid": "20137807"},
+        ]}
+
+    captured_prompts = []
+
+    def capture_call_tool(*a, **k):
+        captured_prompts.append(k.get("prompt", ""))
+        return {
+            "conclusion": "claim rests on a retracted paper",
+            "verdict": "unresolved",
+            "confidence": 0.1,
+            "confidence_rationale": "Below anchor A.",
+            "cited_pmids": ["38765432"],
+            "signal_breakdown": VALID_BREAKDOWN,
+        }
+
+    with patch("app.agents.single_call.embed", return_value=[0.0]), patch(
+        "app.agents.single_call.check_retractions", side_effect=fake_retractions
+    ), patch(
+        "app.agents.single_call.call_tool", side_effect=capture_call_tool
+    ):
+        result = await single_call(conn, "brca1 pancreatic cancer", TEST_DEBATE_ID)
+
+    flagged = next(p for p in result["papers"] if p["pmid"] == "38765432")
+    assert flagged["retracted"] is True
+    assert flagged["retraction_notice"].startswith("Lancet. 2010")
+    # The model was shown the retraction, not just the caller
+    assert "[RETRACTED" in captured_prompts[0]
+    assert result["retrieval_warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_single_call_degrades_with_warning_when_retraction_check_fails(mock_env):
+    conn, cursor = _mock_conn()
+
+    async def failing_retractions(*a, **k):
+        raise RuntimeError("PubMed is down")
+
+    with patch("app.agents.single_call.embed", return_value=[0.0]), patch(
+        "app.agents.single_call.check_retractions", side_effect=failing_retractions
+    ), patch(
+        "app.agents.single_call.call_tool",
+        return_value={
+            "conclusion": "still works",
+            "verdict": "supported",
+            "confidence": 0.8,
+            "confidence_rationale": "Anchor D applies.",
+            "cited_pmids": ["38765432"],
+            "signal_breakdown": VALID_BREAKDOWN,
+        },
+    ):
+        result = await single_call(conn, "brca1 pancreatic cancer", TEST_DEBATE_ID)
+
+    assert result["conclusion"] == "still works"
+    assert any("retraction check failed" in w for w in result["retrieval_warnings"])
+    # Flags stay unset -- unknown, never "verified clean"
+    assert all("retracted" not in p or not p["retracted"] for p in result["papers"])
