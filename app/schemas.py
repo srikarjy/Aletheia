@@ -29,6 +29,21 @@ class Source(BaseModel):
     used_by: list[str]
 
 
+class SignalBreakdown(BaseModel):
+    """Per-evidence-type support scores from single_call, each scored only
+    from evidence types actually present in that call's retrieval (0.0 for an
+    absent type). Additive to the rubric-v1 scalar `confidence`, which is
+    unchanged — this exists so a frontend can render four honest bars instead
+    of faking four from one number. None on the multi-agent path, whose
+    synthesizer predates (and, as the frozen eval subject, doesn't adopt)
+    this field."""
+
+    literature: float = Field(..., ge=0, le=1)
+    protein_evidence: float = Field(..., ge=0, le=1)
+    clinical_evidence: float = Field(..., ge=0, le=1)
+    llm_rating: float = Field(..., ge=0, le=1)
+
+
 class DebateResponse(BaseModel):
     debate_id: UUID
     claim: str
@@ -36,6 +51,7 @@ class DebateResponse(BaseModel):
     verdict: str
     confidence: float
     confidence_rationale: str
+    signal_breakdown: SignalBreakdown | None = None
     driving_provenance_ids: list[int]
     transcript: list[TranscriptEntry]
     sources: list[Source]

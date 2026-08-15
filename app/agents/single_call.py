@@ -63,6 +63,13 @@ If the evidence doesn't actually support the claim, or is too thin to judge, say
 
 confidence_rationale must name the anchor letter applied. cited_pmids must list only PMIDs that appear in the evidence above.
 
+signal_breakdown scores how strongly each evidence TYPE present in the retrieval above supports the claim, each in [0,1]. Score only from what the retrieved abstracts actually report — never from background knowledge:
+- literature: breadth and consistency of independent published support across the retrieved papers.
+- protein_evidence: structural, mutagenesis, binding, or other biophysical data reported in the retrieved abstracts. 0.0 if none of the abstracts report any.
+- clinical_evidence: patient outcomes, trial data, or real-world evidence reported in the retrieved abstracts. 0.0 if none report any.
+- llm_rating: your own self-assessment of this resolution. This is weighted at most 15% downstream, so score it honestly rather than defensively.
+A 0.0 for an absent evidence type is the correct answer, not a failure.
+
 Submit your resolution using the resolve_claim tool."""
 
 RESOLVE_CLAIM_TOOL = {
@@ -93,6 +100,22 @@ RESOLVE_CLAIM_TOOL = {
                 "items": {"type": "string"},
                 "description": "PMIDs from the retrieved evidence that drove the conclusion and confidence.",
             },
+            "signal_breakdown": {
+                "type": "object",
+                "description": "Per-evidence-type support scores, each in [0,1], scored only from evidence types actually present in this retrieval (0.0 when a type is absent).",
+                "properties": {
+                    "literature": {"type": "number", "minimum": 0, "maximum": 1},
+                    "protein_evidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "clinical_evidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "llm_rating": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": [
+                    "literature",
+                    "protein_evidence",
+                    "clinical_evidence",
+                    "llm_rating",
+                ],
+            },
         },
         "required": [
             "conclusion",
@@ -100,9 +123,27 @@ RESOLVE_CLAIM_TOOL = {
             "confidence",
             "confidence_rationale",
             "cited_pmids",
+            "signal_breakdown",
         ],
     },
 }
+
+SIGNAL_KEYS = ("literature", "protein_evidence", "clinical_evidence", "llm_rating")
+
+
+def _breakdown_problems(resolution: dict) -> list[str]:
+    """Return schema violations in resolution's signal_breakdown, empty if
+    valid. Code-enforced like citation integrity, because the API does not
+    guarantee minimum/maximum are honored in tool output."""
+    breakdown = resolution.get("signal_breakdown")
+    if not isinstance(breakdown, dict):
+        return ["signal_breakdown missing or not an object"]
+    problems = []
+    for key in SIGNAL_KEYS:
+        value = breakdown.get(key)
+        if not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            problems.append(f"{key}={value!r} is not a number in [0,1]")
+    return problems
 
 
 def _format_evidence(papers: list[dict]) -> str:
@@ -160,14 +201,22 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
         prompt=prompt,
     )
     bad = [p for p in resolution["cited_pmids"] if p not in valid_pmids]
-    if bad:
-        # Same citation-integrity enforcement as synthesizer.py: one
+    breakdown_problems = _breakdown_problems(resolution)
+    if bad or breakdown_problems:
+        # Same code-enforced integrity as synthesizer.py's citation check: one
         # corrective retry, then fail loudly rather than persist an
         # unauditable "conclude" row.
-        correction = (
-            f"\n\nCORRECTION: cited_pmids {bad} are not PMIDs from the retrieved evidence "
-            f"above. Valid PMIDs are {sorted(valid_pmids)}. Resubmit citing only those."
-        )
+        correction = "\n\nCORRECTION:"
+        if bad:
+            correction += (
+                f" cited_pmids {bad} are not PMIDs from the retrieved evidence "
+                f"above. Valid PMIDs are {sorted(valid_pmids)}. Resubmit citing only those."
+            )
+        if breakdown_problems:
+            correction += (
+                f" signal_breakdown is invalid: {'; '.join(breakdown_problems)}. "
+                f"Every signal must be a number in [0,1]."
+            )
         resolution = call_tool(
             llm_client,
             MODEL,
@@ -176,11 +225,18 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
             prompt=prompt + correction,
         )
         bad = [p for p in resolution["cited_pmids"] if p not in valid_pmids]
+        breakdown_problems = _breakdown_problems(resolution)
         if bad:
             raise RuntimeError(
                 f"single_call cited PMIDs {bad} not present in this call's retrieval "
                 f"for debate {debate_id} after a corrective retry — refusing to persist "
                 f"an unauditable confidence."
+            )
+        if breakdown_problems:
+            raise RuntimeError(
+                f"single_call returned an invalid signal_breakdown for debate "
+                f"{debate_id} after a corrective retry ({'; '.join(breakdown_problems)}) "
+                f"— refusing to persist an unauditable confidence."
             )
 
     driving_provenance_ids = [pmid_to_provenance_id[p] for p in resolution["cited_pmids"]]
@@ -207,6 +263,7 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
         "verdict": resolution["verdict"],
         "confidence": resolution["confidence"],
         "confidence_rationale": resolution["confidence_rationale"],
+        "signal_breakdown": resolution["signal_breakdown"],
         "driving_provenance_ids": driving_provenance_ids,
         "papers": papers,
     }

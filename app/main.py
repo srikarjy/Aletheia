@@ -117,6 +117,7 @@ async def run_synthesis_pipeline(claim: str, debate_id: str) -> DebateResponse:
         verdict=result["verdict"],
         confidence=result["confidence"],
         confidence_rationale=result["confidence_rationale"],
+        signal_breakdown=result["signal_breakdown"],
         driving_provenance_ids=result["driving_provenance_ids"],
         transcript=transcript,
         sources=sources,

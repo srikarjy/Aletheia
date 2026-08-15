@@ -362,7 +362,10 @@ async def search_pubmed(query: str, agent_id: str, max_results: int = 5, timeout
     biolab_python = os.environ.get("BIOLAB_PYTHON_BIN", f"{biolab_path}/.venv/bin/python")
     params = StdioServerParameters(
         command=biolab_python,
-        args=["-m", "biolab.server"],
+        # --stdio: Biolab's __main__ has defaulted to its deployed
+        # streamable-HTTP transport since the HF Space deployment; this
+        # subprocess needs the stdio transport it originally spoke.
+        args=["-m", "biolab.server", "--stdio"],
         cwd=biolab_path,
         env={
             **os.environ,
