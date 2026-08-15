@@ -273,19 +273,11 @@ async def debate_sync(request: DebateRequest) -> DebateResponse:
     claim_hash = get_claim_hash(claim)
     if claim_hash in claim_cache:
         cached = claim_cache[claim_hash]
-        # Return with new debate_id for traceability
-        new_debate_id = uuid4()
-        return DebateResponse(
-            debate_id=new_debate_id,
-            claim=cached.claim,
-            conclusion=cached.conclusion,
-            verdict=cached.verdict,
-            confidence=cached.confidence,
-            confidence_rationale=cached.confidence_rationale,
-            driving_provenance_ids=cached.driving_provenance_ids,
-            transcript=cached.transcript,
-            sources=cached.sources,
-        )
+        # Copy with a fresh debate_id for traceability. model_copy, not a
+        # field-by-field reconstruction: the hand-copied version silently
+        # dropped signal_breakdown when that field was added -- copying the
+        # whole model means a future field can't be lost the same way.
+        return cached.model_copy(update={"debate_id": uuid4()})
 
     debate_id = str(uuid4())
     result = await run_synthesis_pipeline(claim, debate_id)

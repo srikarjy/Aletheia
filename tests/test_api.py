@@ -188,3 +188,42 @@ class TestAPISchemas:
         # Valid
         response = client.post("/batch/debate", json={"claims": ["A", "B"]})
         assert response.status_code != 422
+
+def test_cache_hit_preserves_signal_breakdown(client):
+    """The cache-hit path once reconstructed DebateResponse field by field and
+    silently dropped signal_breakdown; this pins the fix (model_copy)."""
+    from uuid import uuid4
+    from app.main import claim_cache, get_claim_hash
+    from app.schemas import DebateResponse, SignalBreakdown
+
+    claim = "cached claim with breakdown"
+    cached = DebateResponse(
+        debate_id=uuid4(),
+        claim=claim,
+        conclusion="c",
+        verdict="supported",
+        confidence=0.8,
+        confidence_rationale="Anchor D",
+        signal_breakdown=SignalBreakdown(
+            literature=0.9, protein_evidence=0.1, clinical_evidence=0.5, llm_rating=0.8
+        ),
+        driving_provenance_ids=[1],
+        transcript=[],
+        sources=[],
+    )
+    claim_cache[get_claim_hash(claim)] = cached
+    try:
+        resp = client.post("/debate", json={"claim": claim})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["signal_breakdown"] == {
+            "literature": 0.9,
+            "protein_evidence": 0.1,
+            "clinical_evidence": 0.5,
+            "llm_rating": 0.8,
+        }
+        # fresh debate_id per cache hit, everything else preserved
+        assert body["debate_id"] != str(cached.debate_id)
+        assert body["confidence"] == 0.8
+    finally:
+        claim_cache.pop(get_claim_hash(claim), None)
