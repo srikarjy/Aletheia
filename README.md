@@ -387,10 +387,10 @@ Aletheia/
 2. **Every agent decision produces a traceable artifact — no silent steps.**
 3. **Every claim links back to a real source with a real ID.**
 4. **The eval harness is not optional — it is the proof.**
-5. **The agents are not characters. They are cognitive operations made explicit.**
+5. **The agents are not characters. They are cognitive operations made explicit.*
 
 ---
 
 ## License
 
-MIT — Built as a portfolio piece demonstrating production-grade AI system design.
+MIT
