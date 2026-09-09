@@ -15,10 +15,10 @@ from uuid import UUID
 import psycopg
 from anthropic import Anthropic
 
-from app.llm import call_tool, _client as llm_client
+from app.llm import call_tool, provenance_payload, _client as llm_client
 from app.prompts import SKEPTIC_PROMPT_TEMPLATE, prompt_hash
 
-MODEL = "claude-sonnet-4-5"
+MODEL = os.environ.get("ALETHEIA_MODEL", "claude-sonnet-4-5")
 
 RAISE_CHALLENGES_TOOL = {
     "name": "raise_challenges",
@@ -91,7 +91,7 @@ async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: di
                     "skeptic",
                     "critique",
                     challenge.get("target_pmid"),
-                    json.dumps({"issue": challenge["issue"]}),
+                    json.dumps(provenance_payload({"issue": challenge["issue"]}, MODEL)),
                     version,
                 ),
             )
@@ -106,10 +106,10 @@ async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: di
                 "assess",
                 None,
                 json.dumps(
-                    {
+                    provenance_payload({
                         "uncertainty_notes": critique["uncertainty_notes"],
                         "overall_assessment": critique["overall_assessment"],
-                    }
+                    }, MODEL)
                 ),
                 version,
             ),

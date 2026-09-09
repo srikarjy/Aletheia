@@ -12,15 +12,13 @@ caller sees is literally the audit trail, not a parallel summary that could drif
 from it.
 """
 
-import asyncio
 import hashlib
-import json
 import os
 import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,21 +30,19 @@ from app.agents.synthesizer import synthesizer
 from app.agents.single_call import single_call
 from app.db import connect
 from app.embeddings import clear_embedding_cache, get_embedding_cache_stats
+from app.infrastructure import RuntimeState, TTLCache
 from app.logging import configure_logging, get_logger, request_id_middleware
+from app.llm import get_runtime_config
 from app.schemas import DebateRequest, DebateResponse, Source, TranscriptEntry
 
-# In-memory job store (replace with Redis in production)
-job_store: dict[str, dict] = {}
-
-# Job store TTL cleanup configuration
-JOB_STORE_TTL_SECONDS = int(os.environ.get("JOB_STORE_TTL_SECONDS", "3600"))  # 1 hour default
-JOB_STORE_MAX_SIZE = int(os.environ.get("JOB_STORE_MAX_SIZE", "1000"))
-
-# Simple claim cache (keyed by claim hash)
-claim_cache: dict[str, DebateResponse] = {}
-
-# Claim embedding cache for deduplication
-embedding_cache: dict[str, list[float]] = {}
+runtime_state = RuntimeState()
+# Kept as named module-level stores for backwards-compatible imports in the eval
+# harness and tests. They are now bounded TTL caches rather than unbounded dicts.
+job_store = runtime_state.jobs
+claim_cache: TTLCache[str, DebateResponse] = TTLCache(
+    int(os.environ.get("RESPONSE_CACHE_MAX_SIZE", "512")),
+    int(os.environ.get("RESPONSE_CACHE_TTL_SECONDS", "21600")),
+)
 
 
 def get_claim_hash(claim: str) -> str:
@@ -55,25 +51,32 @@ def get_claim_hash(claim: str) -> str:
 
 
 def cleanup_job_store() -> int:
-    """Remove expired jobs from the job store. Returns number of jobs removed."""
-    import time
-    now = time.time()
-    expired = [
-        job_id for job_id, job in job_store.items()
-        if now - job.get("created_at", now) > JOB_STORE_TTL_SECONDS
-    ]
-    for job_id in expired:
-        del job_store[job_id]
-    
-    # Also enforce max size by removing oldest jobs
-    if len(job_store) > JOB_STORE_MAX_SIZE:
-        sorted_jobs = sorted(job_store.items(), key=lambda x: x[1].get("created_at", 0))
-        to_remove = len(job_store) - JOB_STORE_MAX_SIZE
-        for job_id, _ in sorted_jobs[:to_remove]:
-            del job_store[job_id]
-        expired.extend([j[0] for j in sorted_jobs[:to_remove]])
-    
-    return len(expired)
+    """Prune expired L1 jobs; the durable ledger remains queryable in Postgres."""
+    before = len(job_store)
+    # TTLCache prunes on length access.
+    after = len(job_store)
+    return max(0, before - after)
+
+
+def _cache_get(claim_hash: str) -> DebateResponse | None:
+    try:
+        return claim_cache[claim_hash]
+    except KeyError:
+        payload = runtime_state.get_response(claim_hash)
+        if payload is None:
+            return None
+        result = DebateResponse(**payload)
+        claim_cache[claim_hash] = result
+        return result
+
+
+def _cache_put(claim_hash: str, result: DebateResponse) -> None:
+    claim_cache[claim_hash] = result
+    runtime_state.put_response(claim_hash, result.model_dump(mode="json"))
+
+
+def _remember(result: DebateResponse, pipeline: str, from_cache: bool = False) -> None:
+    runtime_state.remember(result.model_dump(mode="json"), pipeline, from_cache)
 
 
 async def run_synthesis_pipeline(claim: str, debate_id: str) -> DebateResponse:
@@ -193,20 +196,24 @@ async def background_debate(job_id: str, claim: str, multi_agent: bool = False) 
     job_store[job_id]["status"] = "running"
     job_store[job_id]["debate_id"] = debate_id
     job_store[job_id]["started_at"] = time.time()
+    runtime_state.put_job(job_id, job_store[job_id])
 
     try:
         pipeline = run_debate_pipeline if multi_agent else run_synthesis_pipeline
         result = await pipeline(claim, debate_id)
         job_store[job_id]["status"] = "completed"
-        job_store[job_id]["result"] = result.model_dump()
+        job_store[job_id]["result"] = result.model_dump(mode="json")
         job_store[job_id]["completed_at"] = time.time()
-        
-        # Cache successful result
-        claim_cache[get_claim_hash(claim)] = result
+        _remember(result, "multi_agent" if multi_agent else "single_call")
+        # Multi-agent is the frozen evaluation subject and must stay uncached.
+        if not multi_agent:
+            _cache_put(get_claim_hash(claim), result)
     except Exception as e:
         job_store[job_id]["status"] = "failed"
         job_store[job_id]["error"] = str(e)
         job_store[job_id]["completed_at"] = time.time()
+    finally:
+        runtime_state.put_job(job_id, job_store[job_id])
 
 
 @asynccontextmanager
@@ -215,6 +222,7 @@ async def lifespan(app: FastAPI):
     log_level = os.environ.get("LOG_LEVEL", "INFO")
     json_logs = os.environ.get("JSON_LOGS", "false").lower() == "true"
     configure_logging(level=log_level, json_output=json_logs)
+    runtime_state.ensure_schema()
     
     # Startup: ensure frontend build exists
     frontend_dist = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
@@ -262,6 +270,7 @@ class JobStatusResponse(BaseModel):
     created_at: float
     started_at: float | None = None
     completed_at: float | None = None
+    cache_hit: bool = False
 
 
 @app.post("/debate", response_model=DebateResponse)
@@ -278,17 +287,20 @@ async def debate_sync(request: DebateRequest) -> DebateResponse:
 
     # Check cache
     claim_hash = get_claim_hash(claim)
-    if claim_hash in claim_cache:
-        cached = claim_cache[claim_hash]
+    cached = _cache_get(claim_hash)
+    if cached is not None:
         # Copy with a fresh debate_id for traceability. model_copy, not a
         # field-by-field reconstruction: the hand-copied version silently
         # dropped signal_breakdown when that field was added -- copying the
         # whole model means a future field can't be lost the same way.
-        return cached.model_copy(update={"debate_id": uuid4()})
+        result = cached.model_copy(update={"debate_id": uuid4()})
+        _remember(result, "single_call", from_cache=True)
+        return result
 
     debate_id = str(uuid4())
     result = await run_synthesis_pipeline(claim, debate_id)
-    claim_cache[claim_hash] = result
+    _cache_put(claim_hash, result)
+    _remember(result, "single_call")
     return result
 
 
@@ -307,7 +319,9 @@ async def debate_multi_agent(request: DebateRequest) -> DebateResponse:
         raise HTTPException(status_code=400, detail="Claim cannot be empty")
 
     debate_id = str(uuid4())
-    return await run_debate_pipeline(claim, debate_id)
+    result = await run_debate_pipeline(claim, debate_id)
+    _remember(result, "multi_agent")
+    return result
 
 
 @app.post("/debate/async", response_model=JobStatusResponse)
@@ -322,36 +336,31 @@ async def debate_async(request: AsyncDebateRequest, background_tasks: Background
 
     # Check cache first
     claim_hash = get_claim_hash(claim)
-    if claim_hash in claim_cache:
-        cached = claim_cache[claim_hash]
+    cached = _cache_get(claim_hash)
+    if cached is not None:
         new_debate_id = uuid4()
+        result = cached.model_copy(update={"debate_id": new_debate_id})
+        _remember(result, "single_call", from_cache=True)
         return JobStatusResponse(
             job_id=str(uuid4()),
             status="completed",
             debate_id=str(new_debate_id),
-            result=DebateResponse(
-                debate_id=new_debate_id,
-                claim=cached.claim,
-                conclusion=cached.conclusion,
-                verdict=cached.verdict,
-                confidence=cached.confidence,
-                confidence_rationale=cached.confidence_rationale,
-                driving_provenance_ids=cached.driving_provenance_ids,
-                transcript=cached.transcript,
-                sources=cached.sources,
-            ),
+            result=result,
             error=None,
             created_at=time.time(),
             started_at=time.time(),
             completed_at=time.time(),
+            cache_hit=True,
         )
 
     job_id = str(uuid4())
     job_store[job_id] = {
         "status": "pending",
         "claim": claim,
+        "multi_agent": request.multi_agent,
         "created_at": time.time(),
     }
+    runtime_state.put_job(job_id, job_store[job_id])
 
     background_tasks.add_task(background_debate, job_id, claim, request.multi_agent)
 
@@ -368,10 +377,9 @@ async def debate_async(request: AsyncDebateRequest, background_tasks: Background
 @app.get("/debate/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(job_id: str) -> JobStatusResponse:
     """Poll for async debate job status."""
-    if job_id not in job_store:
+    job = runtime_state.get_job(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    job = job_store[job_id]
     return JobStatusResponse(
         job_id=job_id,
         status=job["status"],
@@ -387,27 +395,45 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
 @app.get("/debate/jobs")
 async def list_jobs(limit: int = 50, offset: int = 0) -> dict:
     """List recent debate jobs."""
-    jobs = list(job_store.values())
-    jobs.sort(key=lambda j: j["created_at"], reverse=True)
-    return {
-        "total": len(jobs),
-        "jobs": jobs[offset:offset + limit],
-    }
+    total, jobs = runtime_state.list_jobs(min(max(limit, 1), 100), max(offset, 0))
+    return {"total": total, "jobs": jobs}
 
 
 @app.delete("/debate/jobs/{job_id}")
 async def delete_job(job_id: str) -> dict:
     """Delete a job from the store."""
-    if job_id not in job_store:
+    if not runtime_state.delete_job(job_id):
         raise HTTPException(status_code=404, detail="Job not found")
-    del job_store[job_id]
     return {"deleted": job_id}
+
+
+@app.get("/memory/research")
+async def list_research_memory(limit: int = Query(20, ge=1, le=100)) -> dict:
+    """Return compact metadata for recent analyses, newest first."""
+    memories = runtime_state.list_memories(limit)
+    return {"items": memories, "total": len(memories)}
+
+
+@app.get("/memory/research/{debate_id}", response_model=DebateResponse)
+async def get_research_memory(debate_id: str) -> DebateResponse:
+    """Reopen the exact response saved for a prior analysis."""
+    payload = runtime_state.get_memory(debate_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Research memory not found")
+    return DebateResponse(**payload)
+
+
+@app.delete("/memory/research/{debate_id}")
+async def delete_research_memory(debate_id: str) -> dict:
+    if not runtime_state.delete_memory(debate_id):
+        raise HTTPException(status_code=404, detail="Research memory not found")
+    return {"deleted": debate_id}
 
 
 @app.post("/cache/clear")
 async def clear_cache() -> dict:
     """Clear the claim response cache."""
-    count = len(claim_cache)
+    count = len(claim_cache) + runtime_state.clear_responses()
     claim_cache.clear()
     # Note: embedding_cache is now in embeddings module
     return {"cleared_entries": count}
@@ -426,8 +452,11 @@ async def cache_stats() -> dict:
     emb_stats = get_embedding_cache_stats()
     return {
         "claim_cache_size": len(claim_cache),
+        "claim_cache": claim_cache.stats(),
+        "persistent_cache": runtime_state.persistence_available,
         "embedding_cache_size": emb_stats["size"],
         "job_store_size": len(job_store),
+        "job_store": job_store.stats(),
     }
 
 
@@ -443,6 +472,13 @@ async def health_check() -> dict:
             "claims": len(claim_cache),
             "embeddings": emb_stats["size"],
             "jobs": len(job_store),
+        },
+        "infrastructure": {
+            "api": "operational",
+            "persistence": "postgres" if runtime_state.persistence_available else "memory-fallback",
+            "cache": "l1-ttl + postgres-l2",
+            "queue": "background-worker + durable-ledger",
+            "llm": get_runtime_config(),
         },
     }
 

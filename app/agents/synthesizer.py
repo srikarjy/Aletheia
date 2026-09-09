@@ -19,10 +19,10 @@ from uuid import UUID
 import psycopg
 from anthropic import Anthropic
 
-from app.llm import call_tool, _client as llm_client
+from app.llm import call_tool, provenance_payload, _client as llm_client
 from app.prompts import SYNTHESIZER_PROMPT_TEMPLATE, prompt_hash
 
-MODEL = "claude-sonnet-4-5"
+MODEL = os.environ.get("ALETHEIA_MODEL", "claude-sonnet-4-5")
 
 SYNTHESIZE_TOOL = {
     "name": "synthesize",
@@ -135,7 +135,7 @@ async def synthesizer(conn: psycopg.Connection, debate_id: UUID, claim: str) -> 
                 "synthesizer",
                 "conclude",
                 None,
-                json.dumps(result),
+                json.dumps(provenance_payload(result, MODEL)),
                 prompt_hash(SYNTHESIZER_PROMPT_TEMPLATE),
             ),
         )

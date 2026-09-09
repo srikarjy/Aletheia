@@ -19,12 +19,12 @@ import psycopg
 from anthropic import Anthropic
 
 from app.embeddings import embed
-from app.llm import call_tool, _client as llm_client
+from app.llm import call_tool, provenance_payload, _client as llm_client
 from app.mcp_client import search_pubmed
 from app.prompts import ADVOCATE_PROMPT_TEMPLATE, prompt_hash
 
 ADVOCATE_AGENT_ID = "aletheia:advocate"
-MODEL = "claude-sonnet-4-5"
+MODEL = os.environ.get("ALETHEIA_MODEL", "claude-sonnet-4-5")
 
 BUILD_CASE_TOOL = {
     "name": "build_case",
@@ -105,7 +105,7 @@ async def advocate(conn: psycopg.Connection, claim: str, debate_id: UUID) -> dic
                 "appraise",
                 None,
                 None,
-                json.dumps(case),
+                json.dumps(provenance_payload(case, MODEL)),
                 prompt_hash(ADVOCATE_PROMPT_TEMPLATE),
             ),
         )

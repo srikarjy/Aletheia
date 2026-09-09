@@ -37,7 +37,7 @@ from uuid import UUID
 import psycopg
 
 from app.embeddings import embed
-from app.llm import call_tool, _client as llm_client
+from app.llm import call_tool, provenance_payload, _client as llm_client
 from app.mcp_client import (
     check_retractions,
     search_clinicaltrials,
@@ -403,7 +403,9 @@ async def single_call(conn: psycopg.Connection, claim: str, debate_id: UUID) -> 
                 "single_call",
                 "conclude",
                 None,
-                json.dumps({**resolution, "retrieval_warnings": retrieval_warnings}),
+                json.dumps(provenance_payload(
+                    {**resolution, "retrieval_warnings": retrieval_warnings}, MODEL
+                )),
                 prompt_hash(SINGLE_CALL_PROMPT_TEMPLATE),
             ),
         )
