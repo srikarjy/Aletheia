@@ -345,3 +345,28 @@ of "index existed, schema looked right, query looked right, and the system
 was still silently wrong" — the kind of failure mode that doesn't show up
 until you actually run a real query against real data, which is this
 project's whole operating discipline.
+
+---
+
+### Q11 — Gold set for the systematic-review eval {#q11} — OPEN
+
+Which published systematic reviews supply the ground truth? Requirements: the included-study list
+is public and mappable to PMIDs; the review's search date is known (so retrieval can be cut off
+before it); at least one is on a topic where a student would plausibly ask. Someone must verify
+each list by hand, because a wrong gold list silently corrupts every metric downstream. Start with
+n=1 for Phase 12, grow to ~5. Do not use a review nobody has checked.
+
+### Q12 — Can CrewAI run through `app.llm.call_tool`? {#q12} — OPEN
+
+ADR-001 routes every model call through one gateway so the provider, model, and cost are recorded
+in each artifact. CrewAI ships its own LLM clients. Acceptance test for Phase 14: a CrewAI agent's
+completions are served by `call_tool` (via a custom LLM adapter) and appear in provenance with the
+gateway's model record. If that cannot be done cleanly, CrewAI fails the gate and is dropped.
+
+### Q13 — Who owns a LangGraph checkpoint? {#q13} — OPEN
+
+Checkpoints hold full run state, so they are a new IDOR surface. Options: (a) our own `runs` table
+maps `run_id -> owner_sub` and every checkpoint read goes through it, with an unguessable thread id;
+(b) encode the owner into the thread id and rely on the checkpointer's namespacing. Leaning (a):
+the same required-`owner` storage pattern as Phase 10b, so a forgotten scope is a `TypeError`.
+Decide in Phase 13 after reading the checkpointer's actual query surface.

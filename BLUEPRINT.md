@@ -306,14 +306,128 @@ Docker-compose includes API service with proper health checks.
 
 ---
 
+## Phase 9 — Input and evidence guardrails
+
+**Problem:** The API accepted unbounded claims, and retrieved abstracts flowed into prompts as
+trusted text, so a poisoned paper could instruct the model (indirect prompt injection).
+
+**Requirement:** Reject malformed claims before any paid call; quarantine instruction-like evidence
+before it reaches a prompt; measure false positives on real abstracts.
+
+**Scope:** shared `Claim` type (1-500 chars, no control/format characters) on every claim-accepting
+endpoint; `app/guardrails.py` (sanitize, scan, quarantine) wired into `single_call`.
+
+**Exit criteria:** attack corpus is flagged, a benign corpus passes, and a scan of live PubMed
+abstracts shows no known false positives.
+
+**Status 2026-10-09 — DONE for `single_call`.** 714 live abstracts scanned; tuning removed two real
+false-positive classes. **Known gap (G2 in ADR-003):** `/debate/multi-agent` is not yet screened.
+
+---
+
+## Phase 10 — Authentication, authorization, ownership
+
+**Problem:** No endpoint required identity; job and memory lists showed every user's work.
+
+**Requirement:** Verify who is calling (10a) and restrict what they can touch (10b).
+
+**Scope:** ES256 JWT verification with a pinned algorithm and required claims (`app/auth.py`),
+roles `student`/`admin`, a route-policy table enforced by a test, `scripts/mint_token.py` as issuer;
+`owner_sub` on jobs and research memory with owner-scoped reads/lists/deletes and a required
+`owner` argument on every storage call.
+
+**Exit criteria:** forged tokens (alg none, HS256-with-public-key, tampered payload) are rejected;
+student B cannot read, list, or delete student A's data and cannot tell it exists; the SQL scoping
+passes against real Postgres.
+
+**Status 2026-10-09 — DONE.** Open: no rate limits or spend caps, no token revocation.
+
+---
+
+## Phase 11 — Shared seams and the multi-agent guardrail gap
+
+**Problem:** The injection screen lives inside `single_call`, so the multi-agent path is exposed, and
+there is no common place to enforce budgets or swap in a sandbox corpus.
+
+**Requirement:** One retrieval boundary all workflows pass through, plus a budget meter.
+
+**Scope:** `Retriever` protocol (live and fixture implementations); move `screen_evidence` to that
+boundary so `/debate/multi-agent` is screened too; `Budget` (calls, tokens, USD, wall time) with a
+hard stop; inter-agent output screening helper (ADR-003 G3).
+
+**Exit criteria:** an injected abstract no longer reaches any agent on any path; the budget meter
+stops a run at its cap; no new framework is installed yet.
+
+---
+
+## Phase 12 — Plain-Python systematic-review baseline and gold-set harness
+
+**Problem:** Frameworks cannot be judged without something to beat.
+
+**Requirement:** The full SR graph in plain Python plus a harness that scores it against published
+reviews.
+
+**Scope:** frame, search, dual screen + adjudicate, extract, appraise, synthesize; gold-set loader;
+recall, precision, WSS@95, kappa, cost per included study; the one-shot and keyword baselines.
+
+**Exit criteria:** numbers (with run-to-run spread) on at least one verified gold review. Resolves
+[Q11](QUESTIONS.md#q11).
+
+---
+
+## Phase 13 — LangGraph orchestration
+
+**Problem:** The baseline cannot resume after a crash or pause for human approval.
+
+**Requirement:** The same graph on LangGraph with durable checkpoints, parallel screening fan-out,
+a human approval gate, budgets, and owner-scoped API (`POST /reviews`, `GET /reviews/{id}`,
+`POST /reviews/{id}/approve`).
+
+**Exit criteria:** parity with Phase 12 metrics; kill-and-resume test passes; student A cannot read,
+resume, or approve student B's run. Resolves [Q13](QUESTIONS.md#q13).
+
+---
+
+## Phase 14 — CrewAI screening crew (gated)
+
+**Problem:** Does a role-based crew add anything over the plain screening step?
+
+**Requirement:** Replace the screening node's internals with a CrewAI crew (Screener A, B,
+Adjudicator) whose LLM calls go through `app.llm.call_tool`.
+
+**Exit criteria:** a recorded keep/demote decision with numbers against Phases 12-13 (H3). If the
+crew cannot be routed through the gateway ([Q12](QUESTIONS.md#q12)), it is dropped.
+
+---
+
+## Phase 15 — Red team
+
+**Problem:** Guardrails are only tested against attacks the author thought of.
+
+**Requirement:** An attacker crew that generates and mutates poisoned evidence against a sandbox
+corpus, orchestrated by a budgeted LangGraph loop; admin-only endpoint.
+
+**Exit criteria:** an ASR table per attack class before and after each guardrail, FP rate on benign
+abstracts, and surviving mutations added as regression tests.
+
+---
+
+## Phase 16 — TypeScript SDK and frontend
+
+Generated TS SDK from the OpenAPI contract, then a Next.js app that talks only to the SDK:
+login, submit a review question, watch the graph run, approve the inclusion list, and (admin) the
+red-team dashboard. Scope to be written when Phase 15 closes.
+
+---
+
 ## What is explicitly out of scope until a phase above fails without it
 
 Per the README commandment: *don't add infrastructure until a real query
 fails without it.*
 
 - Neo4j — not until a provenance query pgvector can't express shows up
-- LangChain/LangGraph — not at all, per README's existing justification
-- Auth, multi-user, frontend polish — not part of the 90-day deliverable
+- LangChain/LangGraph/CrewAI — reversed 2026-10-09 by [ADR-003](docs/ADR-003-multi-agent-workflows-langgraph-crewai.md), but only behind a plain-Python baseline (Phase 12) and per-framework gates; provenance stays first-party
+- Auth and multi-user — reversed, see Phase 10. Frontend polish is still out until Phase 16
 - Streaming responses from `/debate` — only if synchronous latency proves unusable (see Q8)
 - Redis job queue — in-memory store sufficient until horizontal scaling needed
 - WebSocket streaming — polling works for 74s jobs; add only if UX demands it
