@@ -12,18 +12,21 @@ caller sees is literally the audit trail, not a parallel summary that could drif
 from it.
 """
 
+import functools
 import hashlib
 import os
 import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, BackgroundTasks, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app.budget import Budget, BudgetExceeded, budget_scope
+from app.auth import Principal, Role, require_admin, require_user
 from app.agents.advocate import advocate
 from app.agents.skeptic import skeptic
 from app.agents.synthesizer import synthesizer
@@ -31,9 +34,10 @@ from app.agents.single_call import single_call
 from app.db import connect
 from app.embeddings import clear_embedding_cache, get_embedding_cache_stats
 from app.infrastructure import RuntimeState, TTLCache
+from app.infrastructure.state import ANY_OWNER, Owner
 from app.logging import configure_logging, get_logger, request_id_middleware
 from app.llm import get_runtime_config
-from app.schemas import DebateRequest, DebateResponse, Source, TranscriptEntry
+from app.schemas import Claim, DebateRequest,DebateResponse, Source, TranscriptEntry
 
 runtime_state = RuntimeState()
 # Kept as named module-level stores for backwards-compatible imports in the eval
@@ -75,10 +79,29 @@ def _cache_put(claim_hash: str, result: DebateResponse) -> None:
     runtime_state.put_response(claim_hash, result.model_dump(mode="json"))
 
 
-def _remember(result: DebateResponse, pipeline: str, from_cache: bool = False) -> None:
-    runtime_state.remember(result.model_dump(mode="json"), pipeline, from_cache)
+def _remember(result: DebateResponse, pipeline: str, *, owner: str, from_cache: bool = False) -> None:
+    runtime_state.remember(result.model_dump(mode="json"), pipeline, from_cache, owner=owner)
 
 
+def _scope(principal: Principal) -> Owner:
+    """Which owners' records this caller may touch. Derived ONLY from the verified
+    token -- never from a query parameter or request body, which the caller controls."""
+    return ANY_OWNER if principal.role is Role.admin else principal.sub
+
+
+def _budgeted(fn):
+    """Run a pipeline inside its own resource budget (app/budget.py): every model call
+    it makes is metered, and the run stops with BudgetExceeded at the cap."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        with budget_scope(Budget.from_env()):
+            return await fn(*args, **kwargs)
+
+    return wrapper
+
+
+@_budgeted
 async def run_synthesis_pipeline(claim: str, debate_id: str) -> DebateResponse:
     """Default reasoning path: single_call retrieves evidence and resolves the
     claim in one Claude call. See app/agents/single_call.py's module
@@ -139,6 +162,7 @@ async def run_synthesis_pipeline(claim: str, debate_id: str) -> DebateResponse:
     )
 
 
+@_budgeted
 async def run_debate_pipeline(claim: str, debate_id: str) -> DebateResponse:
     """Multi-agent Advocate->Skeptic->Synthesizer pipeline. Kept unchanged as
     the eval harness's subject (run_phase6.py compares this against
@@ -199,12 +223,13 @@ async def background_debate(job_id: str, claim: str, multi_agent: bool = False) 
     runtime_state.put_job(job_id, job_store[job_id])
 
     try:
+        owner = job_store[job_id]["owner"]  # KeyError => job fails loudly, never unowned
         pipeline = run_debate_pipeline if multi_agent else run_synthesis_pipeline
         result = await pipeline(claim, debate_id)
         job_store[job_id]["status"] = "completed"
         job_store[job_id]["result"] = result.model_dump(mode="json")
         job_store[job_id]["completed_at"] = time.time()
-        _remember(result, "multi_agent" if multi_agent else "single_call")
+        _remember(result, "multi_agent" if multi_agent else "single_call", owner=owner)
         # Multi-agent is the frozen evaluation subject and must stay uncached.
         if not multi_agent:
             _cache_put(get_claim_hash(claim), result)
@@ -241,6 +266,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+@app.exception_handler(BudgetExceeded)
+async def _budget_exceeded_handler(request, exc: BudgetExceeded):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "This run exceeded its resource budget and was stopped.", "resource": exc.resource},
+    )
+
+
 # Add request ID middleware
 app.middleware("http")(request_id_middleware)
 
@@ -256,7 +290,7 @@ app.add_middleware(
 
 
 class AsyncDebateRequest(BaseModel):
-    claim: str
+    claim: Claim
     async_mode: bool = False
     multi_agent: bool = False  # False (default) = single_call; True = the eval harness's Advocate->Skeptic->Synthesizer pipeline
 
@@ -274,7 +308,7 @@ class JobStatusResponse(BaseModel):
 
 
 @app.post("/debate", response_model=DebateResponse)
-async def debate_sync(request: DebateRequest) -> DebateResponse:
+async def debate_sync(request: DebateRequest, principal: Principal = Depends(require_user)) -> DebateResponse:
     """
     Synchronous debate endpoint. Runs single_call: real retrieval + one
     rubric-anchored Claude call (see app/agents/single_call.py's module
@@ -294,18 +328,18 @@ async def debate_sync(request: DebateRequest) -> DebateResponse:
         # dropped signal_breakdown when that field was added -- copying the
         # whole model means a future field can't be lost the same way.
         result = cached.model_copy(update={"debate_id": uuid4()})
-        _remember(result, "single_call", from_cache=True)
+        _remember(result, "single_call", owner=principal.sub, from_cache=True)
         return result
 
     debate_id = str(uuid4())
     result = await run_synthesis_pipeline(claim, debate_id)
     _cache_put(claim_hash, result)
-    _remember(result, "single_call")
+    _remember(result, "single_call", owner=principal.sub)
     return result
 
 
 @app.post("/debate/multi-agent", response_model=DebateResponse)
-async def debate_multi_agent(request: DebateRequest) -> DebateResponse:
+async def debate_multi_agent(request: DebateRequest, principal: Principal = Depends(require_admin)) -> DebateResponse:
     """
     Runs the original Advocate -> Skeptic -> Synthesizer pipeline explicitly.
     Not the default (see POST /debate) -- kept reachable because it's the
@@ -320,12 +354,16 @@ async def debate_multi_agent(request: DebateRequest) -> DebateResponse:
 
     debate_id = str(uuid4())
     result = await run_debate_pipeline(claim, debate_id)
-    _remember(result, "multi_agent")
+    _remember(result, "multi_agent", owner=principal.sub)
     return result
 
 
 @app.post("/debate/async", response_model=JobStatusResponse)
-async def debate_async(request: AsyncDebateRequest, background_tasks: BackgroundTasks) -> JobStatusResponse:
+async def debate_async(
+    request: AsyncDebateRequest,
+    background_tasks: BackgroundTasks,
+    principal: Principal = Depends(require_user),
+) -> JobStatusResponse:
     """
     Asynchronous debate endpoint. Submits job to background queue and returns job ID.
     Poll /debate/jobs/{job_id} for status. Better for production use.
@@ -340,7 +378,7 @@ async def debate_async(request: AsyncDebateRequest, background_tasks: Background
     if cached is not None:
         new_debate_id = uuid4()
         result = cached.model_copy(update={"debate_id": new_debate_id})
-        _remember(result, "single_call", from_cache=True)
+        _remember(result, "single_call", owner=principal.sub, from_cache=True)
         return JobStatusResponse(
             job_id=str(uuid4()),
             status="completed",
@@ -359,6 +397,7 @@ async def debate_async(request: AsyncDebateRequest, background_tasks: Background
         "claim": claim,
         "multi_agent": request.multi_agent,
         "created_at": time.time(),
+        "owner": principal.sub,
     }
     runtime_state.put_job(job_id, job_store[job_id])
 
@@ -375,9 +414,10 @@ async def debate_async(request: AsyncDebateRequest, background_tasks: Background
 
 
 @app.get("/debate/jobs/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(job_id: str) -> JobStatusResponse:
-    """Poll for async debate job status."""
-    job = runtime_state.get_job(job_id)
+async def get_job_status(job_id: str, principal: Principal = Depends(require_user)) -> JobStatusResponse:
+    """Poll for async debate job status. Someone else's job is indistinguishable from a
+    missing one (404), so job ids cannot be probed for existence."""
+    job = runtime_state.get_job(job_id, owner=_scope(principal))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobStatusResponse(
@@ -393,44 +433,46 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
 
 
 @app.get("/debate/jobs")
-async def list_jobs(limit: int = 50, offset: int = 0) -> dict:
-    """List recent debate jobs."""
-    total, jobs = runtime_state.list_jobs(min(max(limit, 1), 100), max(offset, 0))
+async def list_jobs(limit: int = 50, offset: int = 0, principal: Principal = Depends(require_user)) -> dict:
+    """List recent debate jobs: your own, or everyone's if you are an admin."""
+    total, jobs = runtime_state.list_jobs(min(max(limit, 1), 100), max(offset, 0), owner=_scope(principal))
     return {"total": total, "jobs": jobs}
 
 
 @app.delete("/debate/jobs/{job_id}")
-async def delete_job(job_id: str) -> dict:
-    """Delete a job from the store."""
-    if not runtime_state.delete_job(job_id):
+async def delete_job(job_id: str, principal: Principal = Depends(require_user)) -> dict:
+    """Delete one of your jobs (an admin may delete any)."""
+    if not runtime_state.delete_job(job_id, owner=_scope(principal)):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"deleted": job_id}
 
 
 @app.get("/memory/research")
-async def list_research_memory(limit: int = Query(20, ge=1, le=100)) -> dict:
-    """Return compact metadata for recent analyses, newest first."""
-    memories = runtime_state.list_memories(limit)
+async def list_research_memory(
+    limit: int = Query(20, ge=1, le=100), principal: Principal = Depends(require_user)
+) -> dict:
+    """Return compact metadata for your recent analyses, newest first (admin: everyone's)."""
+    memories = runtime_state.list_memories(limit, owner=_scope(principal))
     return {"items": memories, "total": len(memories)}
 
 
 @app.get("/memory/research/{debate_id}", response_model=DebateResponse)
-async def get_research_memory(debate_id: str) -> DebateResponse:
-    """Reopen the exact response saved for a prior analysis."""
-    payload = runtime_state.get_memory(debate_id)
+async def get_research_memory(debate_id: str, principal: Principal = Depends(require_user)) -> DebateResponse:
+    """Reopen the exact response saved for one of your prior analyses."""
+    payload = runtime_state.get_memory(debate_id, owner=_scope(principal))
     if payload is None:
         raise HTTPException(status_code=404, detail="Research memory not found")
     return DebateResponse(**payload)
 
 
 @app.delete("/memory/research/{debate_id}")
-async def delete_research_memory(debate_id: str) -> dict:
-    if not runtime_state.delete_memory(debate_id):
+async def delete_research_memory(debate_id: str, principal: Principal = Depends(require_user)) -> dict:
+    if not runtime_state.delete_memory(debate_id, owner=_scope(principal)):
         raise HTTPException(status_code=404, detail="Research memory not found")
     return {"deleted": debate_id}
 
 
-@app.post("/cache/clear")
+@app.post("/cache/clear", dependencies=[Depends(require_admin)])
 async def clear_cache() -> dict:
     """Clear the claim response cache."""
     count = len(claim_cache) + runtime_state.clear_responses()
@@ -439,14 +481,14 @@ async def clear_cache() -> dict:
     return {"cleared_entries": count}
 
 
-@app.post("/cache/embeddings/clear")
+@app.post("/cache/embeddings/clear", dependencies=[Depends(require_admin)])
 async def clear_embedding_cache_endpoint() -> dict:
     """Clear the embedding cache."""
     count = clear_embedding_cache()
     return {"cleared_entries": count}
 
 
-@app.get("/cache/stats")
+@app.get("/cache/stats", dependencies=[Depends(require_admin)])
 async def cache_stats() -> dict:
     """Get cache statistics."""
     emb_stats = get_embedding_cache_stats()

@@ -58,7 +58,8 @@ CREATE TABLE async_jobs (
     error        TEXT,
     created_at   DOUBLE PRECISION NOT NULL,
     started_at   DOUBLE PRECISION,
-    completed_at DOUBLE PRECISION
+    completed_at DOUBLE PRECISION,
+    owner_sub    TEXT  -- Phase 10b: NULL = predates ownership (admin-only)
 );
 CREATE INDEX async_jobs_created_idx ON async_jobs (created_at DESC);
 
@@ -70,6 +71,9 @@ CREATE TABLE research_memory (
     pipeline    TEXT NOT NULL,
     from_cache  BOOLEAN NOT NULL DEFAULT false,
     response    JSONB NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    owner_sub   TEXT  -- Phase 10b: NULL = predates ownership (admin-only)
 );
 CREATE INDEX research_memory_created_idx ON research_memory (created_at DESC);
+CREATE INDEX async_jobs_owner_idx ON async_jobs (owner_sub, created_at DESC);
+CREATE INDEX research_memory_owner_idx ON research_memory (owner_sub, created_at DESC);

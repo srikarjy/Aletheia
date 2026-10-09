@@ -19,6 +19,7 @@ from uuid import UUID
 import psycopg
 from anthropic import Anthropic
 
+from app.guardrails import screen_agent_detail
 from app.llm import call_tool, provenance_payload, _client as llm_client
 from app.prompts import SYNTHESIZER_PROMPT_TEMPLATE, prompt_hash
 
@@ -92,7 +93,15 @@ def _format_transcript(rows: list[dict]) -> str:
 async def synthesizer(conn: psycopg.Connection, debate_id: UUID, claim: str) -> dict:
     rows = _load_transcript(conn, debate_id)
     valid_ids = {r["id"] for r in rows}
-    transcript_block = _format_transcript(rows)
+    # Guardrail G3: everything the advocate and skeptic wrote is untrusted input here.
+    # The persisted rows stay raw (they are the audit trail); only what the model reads
+    # is screened.
+    screened_rows, tripped_rules = [], set()
+    for r in rows:
+        detail, rules = screen_agent_detail(r["detail"]) if r["detail"] is not None else (None, [])
+        tripped_rules.update(rules)
+        screened_rows.append({**r, "detail": detail})
+    transcript_block = _format_transcript(screened_rows)
     prompt = SYNTHESIZER_PROMPT_TEMPLATE.format(claim=claim, transcript_block=transcript_block)
 
     result = call_tool(
@@ -125,6 +134,14 @@ async def synthesizer(conn: psycopg.Connection, debate_id: UUID, claim: str) -> 
             )
 
     with conn.cursor() as cur:
+        if tripped_rules:
+            cur.execute(
+                "INSERT INTO provenance "
+                "(debate_id, claim, agent, action, source_paper_id, detail) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (str(debate_id), claim, "guardrail", "quarantine", None,
+                 json.dumps({"rules": sorted(tripped_rules), "stage": "transcript"})),
+            )
         cur.execute(
             "INSERT INTO provenance "
             "(debate_id, claim, agent, action, source_paper_id, detail, prompt_version) "

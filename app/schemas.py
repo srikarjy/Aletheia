@@ -7,13 +7,36 @@ anchor, and `driving_provenance_ids` are the code-validated rows behind the numb
 so "why 0.4 and not 0.7" is a row you can point at, not buried in the model's head.
 """
 
+import unicodedata
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
+
+MAX_CLAIM_LENGTH = 500
+
+
+def _reject_hidden_characters(value: str) -> str:
+    """Input guardrail: a claim is one visible line. Control (Cc) characters
+    include newlines, which let a caller fake prompt structure; format (Cf)
+    characters include zero-width text that is invisible to a human reviewer."""
+    for ch in value:
+        if unicodedata.category(ch) in ("Cc", "Cf"):
+            raise ValueError(f"claim contains a disallowed character (U+{ord(ch):04X})")
+    return value
+
+
+# Validated once, reused by every endpoint that accepts a claim, so the rule
+# cannot drift between /debate, /debate/async, /debate/multi-agent and /batch.
+Claim = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_CLAIM_LENGTH),
+    AfterValidator(_reject_hidden_characters),
+]
 
 
 class DebateRequest(BaseModel):
-    claim: str = Field(..., min_length=1)
+    claim: Claim
 
 
 class TranscriptEntry(BaseModel):

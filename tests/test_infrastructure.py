@@ -36,6 +36,6 @@ def test_runtime_memory_falls_back_without_postgres(monkeypatch):
         "verdict": "unresolved",
         "confidence": 0.5,
     }
-    state.remember(payload, "single_call")
-    assert state.get_memory(payload["debate_id"]) == payload
-    assert state.list_memories()[0]["claim"] == "A claim"
+    state.remember(payload, "single_call", owner="alice")
+    assert state.get_memory(payload["debate_id"], owner="alice") == payload
+    assert state.list_memories(owner="alice")[0]["claim"] == "A claim"

@@ -18,6 +18,39 @@ from app.db import connect
 from app.infrastructure.cache import TTLCache
 
 
+class _AnyOwner:
+    """Sentinel meaning "do not restrict by owner" (admins only)."""
+
+    def __repr__(self) -> str:
+        return "ANY_OWNER"
+
+
+ANY_OWNER = _AnyOwner()
+Owner = str | _AnyOwner
+
+# Ownership scoping is a REQUIRED keyword argument on every job/memory read, list and
+# delete -- there is deliberately no default. A default of "everyone" would turn each
+# forgotten argument into a silent cross-user data leak; a required argument turns it
+# into a TypeError the first time the code path runs. Admins pass ANY_OWNER explicitly,
+# so reading someone else's data is always a visible decision at the call site.
+#
+# "Not found" and "not yours" are the same outcome (None / False) *by construction*:
+# there is one code path, so the API cannot leak which job ids exist.
+# Rows with a NULL owner (created before ownership existed) match no real owner, so
+# only ANY_OWNER can see them: legacy data fails closed, it is not claimed by anyone.
+
+
+def _visible(record_owner: str | None, owner: Owner) -> bool:
+    return owner is ANY_OWNER or (record_owner is not None and record_owner == owner)
+
+
+def _owner_sql(owner: Owner) -> tuple[str, tuple]:
+    """Static SQL fragment + params; the owner value only ever travels as a parameter."""
+    if owner is ANY_OWNER:
+        return "", ()
+    return " AND owner_sub = %s", (owner,)
+
+
 class RuntimeState:
     def __init__(self) -> None:
         ttl = int(os.environ.get("RESPONSE_CACHE_TTL_SECONDS", "21600"))
@@ -128,8 +161,8 @@ class RuntimeState:
                     cur.execute(
                         """INSERT INTO async_jobs
                            (job_id, status, claim, multi_agent, debate_id, result, error,
-                            created_at, started_at, completed_at)
-                           VALUES (%s::uuid, %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s)
+                            created_at, started_at, completed_at, owner_sub)
+                           VALUES (%s::uuid, %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s)
                            ON CONFLICT (job_id) DO UPDATE SET status = EXCLUDED.status,
                            debate_id = EXCLUDED.debate_id, result = EXCLUDED.result,
                            error = EXCLUDED.error, started_at = EXCLUDED.started_at,
@@ -139,7 +172,7 @@ class RuntimeState:
                             bool(job.get("multi_agent")), job.get("debate_id"),
                             Jsonb(job["result"]) if job.get("result") else None,
                             job.get("error"), job["created_at"], job.get("started_at"),
-                            job.get("completed_at"),
+                            job.get("completed_at"), job.get("owner"),
                         ),
                     )
                 conn.commit()
@@ -148,9 +181,10 @@ class RuntimeState:
         except Exception:
             self.persistence_available = False
 
-    def get_job(self, job_id: str) -> dict[str, Any] | None:
+    def get_job(self, job_id: str, *, owner: Owner) -> dict[str, Any] | None:
         try:
-            return self.jobs[job_id]
+            job = self.jobs[job_id]
+            return job if _visible(job.get("owner"), owner) else None
         except KeyError:
             pass
         if not self.ensure_schema():
@@ -161,7 +195,7 @@ class RuntimeState:
                 with conn.cursor() as cur:
                     cur.execute(
                         """SELECT status, claim, multi_agent, debate_id::text, result, error,
-                                  created_at, started_at, completed_at
+                                  created_at, started_at, completed_at, owner_sub
                            FROM async_jobs WHERE job_id = %s::uuid""",
                         (job_id,),
                     )
@@ -171,27 +205,29 @@ class RuntimeState:
             if row:
                 job = dict(zip(
                     ("status", "claim", "multi_agent", "debate_id", "result", "error",
-                     "created_at", "started_at", "completed_at"), row
+                     "created_at", "started_at", "completed_at", "owner"), row
                 ))
                 self.jobs[job_id] = job
-                return job
+                return job if _visible(job["owner"], owner) else None
         except Exception:
             self.persistence_available = False
         return None
 
-    def list_jobs(self, limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
+    def list_jobs(self, limit: int, offset: int, *, owner: Owner) -> tuple[int, list[dict[str, Any]]]:
         if self.ensure_schema():
             try:
+                where, params = _owner_sql(owner)
                 conn = connect()
                 try:
                     with conn.cursor() as cur:
-                        cur.execute("SELECT count(*) FROM async_jobs")
+                        cur.execute(f"SELECT count(*) FROM async_jobs WHERE true{where}", params)
                         total = cur.fetchone()[0]
                         cur.execute(
-                            """SELECT job_id::text, status, claim, debate_id::text, error,
+                            f"""SELECT job_id::text, status, claim, debate_id::text, error,
                                       created_at, started_at, completed_at
-                               FROM async_jobs ORDER BY created_at DESC LIMIT %s OFFSET %s""",
-                            (limit, offset),
+                               FROM async_jobs WHERE true{where}
+                               ORDER BY created_at DESC LIMIT %s OFFSET %s""",
+                            (*params, limit, offset),
                         )
                         rows = cur.fetchall()
                 finally:
@@ -200,22 +236,28 @@ class RuntimeState:
                 return total, [dict(zip(keys, row)) for row in rows]
             except Exception:
                 self.persistence_available = False
-        pairs = sorted(self.jobs.items(), key=lambda pair: pair[1].get("created_at", 0), reverse=True)
+        pairs = sorted(
+            ((k, v) for k, v in self.jobs.items() if _visible(v.get("owner"), owner)),
+            key=lambda pair: pair[1].get("created_at", 0),
+            reverse=True,
+        )
         return len(pairs), [{"job_id": key, **value} for key, value in pairs[offset:offset + limit]]
 
-    def delete_job(self, job_id: str) -> bool:
+    def delete_job(self, job_id: str, *, owner: Owner) -> bool:
         found = False
         try:
-            del self.jobs[job_id]
-            found = True
+            if _visible(self.jobs[job_id].get("owner"), owner):
+                del self.jobs[job_id]
+                found = True
         except KeyError:
             pass
         if self.ensure_schema():
             try:
+                where, params = _owner_sql(owner)
                 conn = connect()
                 try:
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM async_jobs WHERE job_id = %s::uuid", (job_id,))
+                        cur.execute(f"DELETE FROM async_jobs WHERE job_id = %s::uuid{where}", (job_id, *params))
                         found = found or cur.rowcount > 0
                     conn.commit()
                 finally:
@@ -224,7 +266,10 @@ class RuntimeState:
                 self.persistence_available = False
         return found
 
-    def remember(self, payload: dict[str, Any], pipeline: str, from_cache: bool = False) -> None:
+    def remember(self, payload: dict[str, Any], pipeline: str, from_cache: bool = False, *, owner: str) -> None:
+        """`owner` is always a concrete subject (who ran the analysis), never ANY_OWNER."""
+        if not isinstance(owner, str) or not owner:
+            raise ValueError("remember() requires a concrete owner subject")
         debate_id = str(payload["debate_id"])
         memory = {
             "debate_id": debate_id,
@@ -234,6 +279,7 @@ class RuntimeState:
             "pipeline": pipeline,
             "from_cache": from_cache,
             "created_at": time.time(),
+            "owner": owner,
             "result": payload,
         }
         with self._lock:
@@ -246,11 +292,11 @@ class RuntimeState:
                 with conn.cursor() as cur:
                     cur.execute(
                         """INSERT INTO research_memory
-                           (debate_id, claim, verdict, confidence, pipeline, from_cache, response)
-                           VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)
+                           (debate_id, claim, verdict, confidence, pipeline, from_cache, response, owner_sub)
+                           VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s)
                            ON CONFLICT (debate_id) DO NOTHING""",
                         (debate_id, memory["claim"], memory["verdict"], memory["confidence"],
-                         pipeline, from_cache, Jsonb(payload)),
+                         pipeline, from_cache, Jsonb(payload), owner),
                     )
                 conn.commit()
             finally:
@@ -258,17 +304,19 @@ class RuntimeState:
         except Exception:
             self.persistence_available = False
 
-    def list_memories(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_memories(self, limit: int = 20, *, owner: Owner) -> list[dict[str, Any]]:
         if self.ensure_schema():
             try:
+                where, params = _owner_sql(owner)
                 conn = connect()
                 try:
                     with conn.cursor() as cur:
                         cur.execute(
-                            """SELECT debate_id::text, claim, verdict, confidence, pipeline,
+                            f"""SELECT debate_id::text, claim, verdict, confidence, pipeline,
                                       from_cache, extract(epoch from created_at)
-                               FROM research_memory ORDER BY created_at DESC LIMIT %s""",
-                            (limit,),
+                               FROM research_memory WHERE true{where}
+                               ORDER BY created_at DESC LIMIT %s""",
+                            (*params, limit),
                         )
                         rows = cur.fetchall()
                 finally:
@@ -278,21 +326,29 @@ class RuntimeState:
             except Exception:
                 self.persistence_available = False
         with self._lock:
-            values = sorted(self.memories.values(), key=lambda item: item["created_at"], reverse=True)
-            return [{k: v for k, v in item.items() if k != "result"} for item in values[:limit]]
+            values = sorted(
+                (m for m in self.memories.values() if _visible(m.get("owner"), owner)),
+                key=lambda item: item["created_at"],
+                reverse=True,
+            )
+            return [{k: v for k, v in item.items() if k not in ("result", "owner")} for item in values[:limit]]
 
-    def get_memory(self, debate_id: str) -> dict[str, Any] | None:
+    def get_memory(self, debate_id: str, *, owner: Owner) -> dict[str, Any] | None:
         with self._lock:
             local = self.memories.get(debate_id)
         if local:
-            return local["result"]
+            return local["result"] if _visible(local.get("owner"), owner) else None
         if not self.ensure_schema():
             return None
         try:
+            where, params = _owner_sql(owner)
             conn = connect()
             try:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT response FROM research_memory WHERE debate_id = %s::uuid", (debate_id,))
+                    cur.execute(
+                        f"SELECT response FROM research_memory WHERE debate_id = %s::uuid{where}",
+                        (debate_id, *params),
+                    )
                     row = cur.fetchone()
             finally:
                 conn.close()
@@ -301,15 +357,20 @@ class RuntimeState:
             self.persistence_available = False
             return None
 
-    def delete_memory(self, debate_id: str) -> bool:
+    def delete_memory(self, debate_id: str, *, owner: Owner) -> bool:
+        found = False
         with self._lock:
-            found = self.memories.pop(debate_id, None) is not None
+            local = self.memories.get(debate_id)
+            if local is not None and _visible(local.get("owner"), owner):
+                del self.memories[debate_id]
+                found = True
         if self.ensure_schema():
             try:
+                where, params = _owner_sql(owner)
                 conn = connect()
                 try:
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM research_memory WHERE debate_id = %s::uuid", (debate_id,))
+                        cur.execute(f"DELETE FROM research_memory WHERE debate_id = %s::uuid{where}", (debate_id, *params))
                         found = found or cur.rowcount > 0
                     conn.commit()
                 finally:
@@ -354,4 +415,12 @@ CREATE TABLE IF NOT EXISTS research_memory (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS research_memory_created_idx ON research_memory (created_at DESC);
+
+-- Phase 10b: ownership. Nullable on purpose: rows that predate ownership have NULL and
+-- are visible to admins only (fail closed). Not backfilled -- guessing an owner would
+-- hand someone else's data to the wrong person.
+ALTER TABLE async_jobs ADD COLUMN IF NOT EXISTS owner_sub TEXT;
+ALTER TABLE research_memory ADD COLUMN IF NOT EXISTS owner_sub TEXT;
+CREATE INDEX IF NOT EXISTS async_jobs_owner_idx ON async_jobs (owner_sub, created_at DESC);
+CREATE INDEX IF NOT EXISTS research_memory_owner_idx ON research_memory (owner_sub, created_at DESC);
 """

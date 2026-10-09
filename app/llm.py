@@ -20,6 +20,8 @@ import threading
 from anthropic import Anthropic
 from openai import OpenAI
 
+from app import budget
+
 
 DEFAULT_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "2048"))
 MAX_TOKENS_RETRY_INCREMENT = int(os.environ.get("CLAUDE_MAX_TOKENS_RETRY_INCREMENT", "1024"))
@@ -93,6 +95,7 @@ def _record_usage(model: str, input_tokens: int, output_tokens: int) -> None:
     cost = 0.0
     if rates is not None:
         cost = (input_tokens / 1_000_000) * rates["input"] + (output_tokens / 1_000_000) * rates["output"]
+    budget.charge(input_tokens, output_tokens, cost)
     with _cost_lock:
         _cost_tracker["input_tokens"] += input_tokens
         _cost_tracker["output_tokens"] += output_tokens
@@ -235,6 +238,9 @@ def call_tool(
     else:
         raise ValueError("Must provide either (tool, prompt) or (tool_name, tool_schema, prompt)")
     
+    # Per-run budget (app/budget.py): refuse the call if the run's cap is already reached.
+    budget.begin_call()
+
     # Mock mode
     if client is None:
         return _mock_tool_response(_tool_name, _prompt)
@@ -277,6 +283,8 @@ def call_tool(
     max_attempts = max(1, min(token_bound_attempts, HARD_MAX_ATTEMPTS))
 
     for attempt in range(max_attempts):
+        if attempt:
+            budget.check()  # a truncation retry is another paid request
         response = client.messages.create(
             model=configured_model,
             max_tokens=_max_tokens,

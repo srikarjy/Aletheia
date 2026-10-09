@@ -19,6 +19,7 @@ import psycopg
 from anthropic import Anthropic
 
 from app.embeddings import embed
+from app.guardrails import screen_papers
 from app.llm import call_tool, provenance_payload, _client as llm_client
 from app.mcp_client import search_pubmed
 from app.prompts import ADVOCATE_PROMPT_TEMPLATE, prompt_hash
@@ -49,9 +50,20 @@ BUILD_CASE_TOOL = {
 
 async def advocate(conn: psycopg.Connection, claim: str, debate_id: UUID) -> dict:
     result = await search_pubmed(claim, agent_id=ADVOCATE_AGENT_ID)
-    papers = result["papers"]
+    # Guardrail G2: sanitize + quarantine at the retrieval boundary, before anything is
+    # embedded, stored or shown to a model. The skeptic reads advocate_result["papers"],
+    # so it inherits the cleaned list.
+    papers, quarantined = screen_papers(result["papers"])
 
     with conn.cursor() as cur:
+        for q in quarantined:
+            cur.execute(
+                "INSERT INTO provenance "
+                "(debate_id, claim, agent, action, source_paper_id, detail) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (str(debate_id), claim, "guardrail", "quarantine", q.record_id,
+                 json.dumps({"rules": list(q.rules), "stage": "retrieval"})),
+            )
         for paper in papers:
             vector = embed(paper["abstract"])
             cur.execute(

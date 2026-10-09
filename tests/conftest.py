@@ -12,6 +12,8 @@ os.environ.setdefault("MOCK_RETRIEVAL", "true")
 os.environ.setdefault("BIOLAB_PROJECT_PATH", "/fake/path")
 os.environ.setdefault("BIOLAB_DB_PATH", "/fake/path/biolab.db")
 
+from auth_helpers import mint_test_token  # noqa: E402  (also sets AUTH_JWT_PUBLIC_KEY)
+
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -23,10 +25,19 @@ def event_loop():
 
 
 @pytest.fixture
-def client():
-    """FastAPI test client."""
+def anon_client():
+    """FastAPI test client with NO credentials. Use for auth tests."""
     from app.main import app
     return TestClient(app)
+
+
+@pytest.fixture
+def client():
+    """FastAPI test client authenticated as an ADMIN. For tests about behaviour other
+    than authorization; it deliberately cannot find a missing role gate, so
+    tests/test_auth.py uses anon_client and explicit student/admin tokens instead."""
+    from app.main import app
+    return TestClient(app, headers={"Authorization": f"Bearer {mint_test_token('test-admin', 'admin')}"})
 
 
 @pytest.fixture
