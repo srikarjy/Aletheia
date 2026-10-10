@@ -20,7 +20,9 @@ RUN pip install --no-cache-dir \
     mcp==1.28.1 \
     anthropic==0.116.0 \
     ragas==0.4.3 \
-    structlog==25.5.0
+    structlog==25.5.0 \
+    "pyjwt>=2.8.0,<3.0.0" \
+    "cryptography>=42.0.0"
 
 # Patch ragas to use new langchain_google_vertexai import location
 COPY scripts/patch_ragas.py /tmp/patch_ragas.py
