@@ -58,7 +58,7 @@ async def test_advocate_never_shows_or_stores_a_poisoned_paper(mock_env):
         prompts.append(k["prompt"])
         return {"case_summary": "ok", "cited_pmids": ["111"]}
 
-    with patch("app.agents.advocate.search_pubmed", AsyncMock(return_value={"papers": papers})), patch(
+    with patch("app.retriever.search_pubmed", AsyncMock(return_value={"papers": papers})), patch(
         "app.agents.advocate.embed", side_effect=lambda t: embedded.append(t) or [0.0]
     ), patch("app.agents.advocate.call_tool", side_effect=fake_call_tool):
         result = await advocate(conn, "brca1 risk", DEBATE_ID)
