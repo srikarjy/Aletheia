@@ -1,0 +1,1123 @@
+{
+ "components": {
+  "schemas": {
+   "AsyncDebateRequest": {
+    "properties": {
+     "async_mode": {
+      "default": false,
+      "title": "Async Mode",
+      "type": "boolean"
+     },
+     "claim": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Claim",
+      "type": "string"
+     },
+     "multi_agent": {
+      "default": false,
+      "title": "Multi Agent",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "claim"
+    ],
+    "title": "AsyncDebateRequest",
+    "type": "object"
+   },
+   "BatchJobResponse": {
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "completed": {
+      "title": "Completed",
+      "type": "integer"
+     },
+     "failed": {
+      "title": "Failed",
+      "type": "integer"
+     },
+     "results": {
+      "default": [],
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Results",
+      "type": "array"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "total_claims": {
+      "title": "Total Claims",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "batch_id",
+     "status",
+     "total_claims",
+     "completed",
+     "failed"
+    ],
+    "title": "BatchJobResponse",
+    "type": "object"
+   },
+   "BatchRequest": {
+    "properties": {
+     "async_mode": {
+      "default": true,
+      "title": "Async Mode",
+      "type": "boolean"
+     },
+     "claims": {
+      "items": {
+       "maxLength": 500,
+       "minLength": 1,
+       "type": "string"
+      },
+      "title": "Claims",
+      "type": "array"
+     }
+    },
+    "required": [
+     "claims"
+    ],
+    "title": "BatchRequest",
+    "type": "object"
+   },
+   "DebateRequest": {
+    "properties": {
+     "claim": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Claim",
+      "type": "string"
+     }
+    },
+    "required": [
+     "claim"
+    ],
+    "title": "DebateRequest",
+    "type": "object"
+   },
+   "DebateResponse": {
+    "properties": {
+     "claim": {
+      "title": "Claim",
+      "type": "string"
+     },
+     "conclusion": {
+      "title": "Conclusion",
+      "type": "string"
+     },
+     "confidence": {
+      "title": "Confidence",
+      "type": "number"
+     },
+     "confidence_rationale": {
+      "title": "Confidence Rationale",
+      "type": "string"
+     },
+     "debate_id": {
+      "format": "uuid",
+      "title": "Debate Id",
+      "type": "string"
+     },
+     "driving_provenance_ids": {
+      "items": {
+       "type": "integer"
+      },
+      "title": "Driving Provenance Ids",
+      "type": "array"
+     },
+     "signal_breakdown": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SignalBreakdown"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/Source"
+      },
+      "title": "Sources",
+      "type": "array"
+     },
+     "transcript": {
+      "items": {
+       "$ref": "#/components/schemas/TranscriptEntry"
+      },
+      "title": "Transcript",
+      "type": "array"
+     },
+     "verdict": {
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "debate_id",
+     "claim",
+     "conclusion",
+     "verdict",
+     "confidence",
+     "confidence_rationale",
+     "driving_provenance_ids",
+     "transcript",
+     "sources"
+    ],
+    "title": "DebateResponse",
+    "type": "object"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "title": "Detail",
+      "type": "array"
+     }
+    },
+    "title": "HTTPValidationError",
+    "type": "object"
+   },
+   "JobStatusResponse": {
+    "properties": {
+     "cache_hit": {
+      "default": false,
+      "title": "Cache Hit",
+      "type": "boolean"
+     },
+     "completed_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Completed At"
+     },
+     "created_at": {
+      "title": "Created At",
+      "type": "number"
+     },
+     "debate_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Debate Id"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "result": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DebateResponse"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "started_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Started At"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id",
+     "status",
+     "created_at"
+    ],
+    "title": "JobStatusResponse",
+    "type": "object"
+   },
+   "SignalBreakdown": {
+    "description": "Per-evidence-type support scores from single_call, each scored only\nfrom evidence types actually present in that call's retrieval (0.0 for an\nabsent type). Additive to the rubric-v1 scalar `confidence`, which is\nunchanged \u2014 this exists so a frontend can render four honest bars instead\nof faking four from one number. None on the multi-agent path, whose\nsynthesizer predates (and, as the frozen eval subject, doesn't adopt)\nthis field.",
+    "properties": {
+     "clinical_evidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Clinical Evidence",
+      "type": "number"
+     },
+     "literature": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Literature",
+      "type": "number"
+     },
+     "llm_rating": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Llm Rating",
+      "type": "number"
+     },
+     "protein_evidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Protein Evidence",
+      "type": "number"
+     }
+    },
+    "required": [
+     "literature",
+     "protein_evidence",
+     "clinical_evidence",
+     "llm_rating"
+    ],
+    "title": "SignalBreakdown",
+    "type": "object"
+   },
+   "Source": {
+    "properties": {
+     "concern": {
+      "default": false,
+      "title": "Concern",
+      "type": "boolean"
+     },
+     "paper_id": {
+      "title": "Paper Id",
+      "type": "string"
+     },
+     "retracted": {
+      "default": false,
+      "title": "Retracted",
+      "type": "boolean"
+     },
+     "retraction_notice": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Retraction Notice"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "used_by": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Used By",
+      "type": "array"
+     }
+    },
+    "required": [
+     "paper_id",
+     "title",
+     "used_by"
+    ],
+    "title": "Source",
+    "type": "object"
+   },
+   "TranscriptEntry": {
+    "properties": {
+     "action": {
+      "title": "Action",
+      "type": "string"
+     },
+     "agent": {
+      "title": "Agent",
+      "type": "string"
+     },
+     "detail": {
+      "additionalProperties": true,
+      "title": "Detail",
+      "type": "object"
+     },
+     "source_paper_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Paper Id"
+     }
+    },
+    "required": [
+     "agent",
+     "action",
+     "detail"
+    ],
+    "title": "TranscriptEntry",
+    "type": "object"
+   },
+   "ValidationError": {
+    "properties": {
+     "ctx": {
+      "title": "Context",
+      "type": "object"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "title": "Location",
+      "type": "array"
+     },
+     "msg": {
+      "title": "Message",
+      "type": "string"
+     },
+     "type": {
+      "title": "Error Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError",
+    "type": "object"
+   }
+  },
+  "securitySchemes": {
+   "HTTPBearer": {
+    "scheme": "bearer",
+    "type": "http"
+   }
+  }
+ },
+ "info": {
+  "description": "Multi-agent scientific reasoning system with full provenance traceability",
+  "title": "Aletheia",
+  "version": "0.1.0"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/batch/debate": {
+   "post": {
+    "description": "Submit multiple claims for batch debate processing.",
+    "operationId": "batch_debate_batch_debate_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BatchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BatchJobResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Batch Debate",
+    "tags": [
+     "batch"
+    ]
+   }
+  },
+  "/batch/debate/{batch_id}": {
+   "get": {
+    "description": "Get batch processing status.",
+    "operationId": "get_batch_status_batch_debate__batch_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BatchJobResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Batch Status",
+    "tags": [
+     "batch"
+    ]
+   }
+  },
+  "/batch/eval/claims": {
+   "get": {
+    "description": "List the curated evaluation claims with metadata.",
+    "operationId": "list_eval_claims_batch_eval_claims_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Eval Claims Batch Eval Claims Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Eval Claims",
+    "tags": [
+     "batch"
+    ]
+   }
+  },
+  "/batch/eval/run": {
+   "post": {
+    "description": "Run the full curated evaluation set (Phase 5+).",
+    "operationId": "run_full_eval_batch_eval_run_post",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Run Full Eval Batch Eval Run Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Run Full Eval",
+    "tags": [
+     "batch"
+    ]
+   }
+  },
+  "/cache/clear": {
+   "post": {
+    "description": "Clear the claim response cache.",
+    "operationId": "clear_cache_cache_clear_post",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Clear Cache Cache Clear Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Clear Cache"
+   }
+  },
+  "/cache/embeddings/clear": {
+   "post": {
+    "description": "Clear the embedding cache.",
+    "operationId": "clear_embedding_cache_endpoint_cache_embeddings_clear_post",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Clear Embedding Cache Endpoint Cache Embeddings Clear Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Clear Embedding Cache Endpoint"
+   }
+  },
+  "/cache/stats": {
+   "get": {
+    "description": "Get cache statistics.",
+    "operationId": "cache_stats_cache_stats_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Cache Stats Cache Stats Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cache Stats"
+   }
+  },
+  "/debate": {
+   "post": {
+    "description": "Synchronous debate endpoint. Runs single_call: real retrieval + one\nrubric-anchored Claude call (see app/agents/single_call.py's module\ndocstring for why this is the default over the multi-agent pipeline).\nUses caching for repeated claims.",
+    "operationId": "debate_sync_debate_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DebateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DebateResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Debate Sync"
+   }
+  },
+  "/debate/async": {
+   "post": {
+    "description": "Asynchronous debate endpoint. Submits job to background queue and returns job ID.\nPoll /debate/jobs/{job_id} for status. Better for production use.",
+    "operationId": "debate_async_debate_async_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AsyncDebateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobStatusResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Debate Async"
+   }
+  },
+  "/debate/jobs": {
+   "get": {
+    "description": "List recent debate jobs: your own, or everyone's if you are an admin.",
+    "operationId": "list_jobs_debate_jobs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Jobs Debate Jobs Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Jobs"
+   }
+  },
+  "/debate/jobs/{job_id}": {
+   "delete": {
+    "description": "Delete one of your jobs (an admin may delete any).",
+    "operationId": "delete_job_debate_jobs__job_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Delete Job Debate Jobs  Job Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Job"
+   },
+   "get": {
+    "description": "Poll for async debate job status. Someone else's job is indistinguishable from a\nmissing one (404), so job ids cannot be probed for existence.",
+    "operationId": "get_job_status_debate_jobs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobStatusResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Job Status"
+   }
+  },
+  "/debate/multi-agent": {
+   "post": {
+    "description": "Runs the original Advocate -> Skeptic -> Synthesizer pipeline explicitly.\nNot the default (see POST /debate) -- kept reachable because it's the\neval harness's (run_phase6.py) subject; the comparison against\nsingle_call only means something if this keeps running under the same\nconditions it was measured under. Expected latency: ~74 seconds.\nNot cached, unlike /debate, so eval runs always get a fresh pass.",
+    "operationId": "debate_multi_agent_debate_multi_agent_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DebateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DebateResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Debate Multi Agent"
+   }
+  },
+  "/health": {
+   "get": {
+    "description": "Health check endpoint.",
+    "operationId": "health_check_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Health Check Health Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Health Check"
+   }
+  },
+  "/memory/research": {
+   "get": {
+    "description": "Return compact metadata for your recent analyses, newest first (admin: everyone's).",
+    "operationId": "list_research_memory_memory_research_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Research Memory Memory Research Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Research Memory"
+   }
+  },
+  "/memory/research/{debate_id}": {
+   "delete": {
+    "operationId": "delete_research_memory_memory_research__debate_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "debate_id",
+      "required": true,
+      "schema": {
+       "title": "Debate Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Delete Research Memory Memory Research  Debate Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Research Memory"
+   },
+   "get": {
+    "description": "Reopen the exact response saved for one of your prior analyses.",
+    "operationId": "get_research_memory_memory_research__debate_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "debate_id",
+      "required": true,
+      "schema": {
+       "title": "Debate Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DebateResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Research Memory"
+   }
+  }
+ }
+}
