@@ -1,0 +1,33 @@
+# Aletheia API for Railway (API only: the UI is the Next.js app in web/, deployed on Vercel).
+# Postgres is external (Neon); set DATABASE_URL, OPENAI_API_KEY and AUTH_JWT_PUBLIC_KEY as
+# Railway variables. Railway injects PORT.
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+RUN pip install --no-cache-dir poetry==2.4.1
+COPY pyproject.toml poetry.lock ./
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --only main --no-root
+
+COPY app/ ./app/
+COPY db/ ./db/
+COPY scripts/ ./scripts/
+
+# Bundled Biolab MCP server (real PubMed retrieval). biolab_vendor/ is gitignored on
+# purpose, so it only exists when you upload from your machine with `railway up`; the
+# CLI can silently skip ignored files (see the Dockerfile.hf note). Fail the build here
+# instead of deploying an API whose every retrieval call crashes.
+COPY biolab_vendor/ ./biolab_vendor/
+RUN test -f biolab_vendor/biolab/server.py \
+    || (echo "biolab_vendor is empty: stage it with scripts/deploy_hf_space.sh steps first" >&2; exit 1)
+RUN if [ -f biolab_vendor/requirements.txt ]; then pip install --no-cache-dir -r biolab_vendor/requirements.txt; fi
+
+ENV BIOLAB_PROJECT_PATH=/app/biolab_vendor
+ENV BIOLAB_PYTHON_BIN=/usr/local/bin/python
+ENV BIOLAB_DB_PATH=/app/biolab_vendor/biolab.db
+
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
