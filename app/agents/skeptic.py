@@ -15,10 +15,11 @@ from uuid import UUID
 import psycopg
 from anthropic import Anthropic
 
-from app.llm import call_tool, _client as llm_client
+from app.guardrails import screen_agent_text
+from app.llm import call_tool, provenance_payload, _client as llm_client
 from app.prompts import SKEPTIC_PROMPT_TEMPLATE, prompt_hash
 
-MODEL = "claude-sonnet-4-5"
+MODEL = os.environ.get("ALETHEIA_MODEL", "claude-sonnet-4-5")
 
 RAISE_CHALLENGES_TOOL = {
     "name": "raise_challenges",
@@ -66,8 +67,10 @@ async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: di
     evidence_block = "\n\n".join(
         f"PMID {p['pmid']}: {p['title']}\n{p['abstract']}" for p in papers
     )
+    # Guardrail G3: the advocate's output is untrusted input to the skeptic.
+    case_summary, advocate_rules = screen_agent_text(case["case_summary"])
     prompt = SKEPTIC_PROMPT_TEMPLATE.format(
-        claim=claim, case_summary=case["case_summary"], evidence_block=evidence_block
+        claim=claim, case_summary=case_summary, evidence_block=evidence_block
     )
 
     critique = call_tool(
@@ -80,6 +83,14 @@ async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: di
     version = prompt_hash(SKEPTIC_PROMPT_TEMPLATE)
 
     with conn.cursor() as cur:
+        if advocate_rules:
+            cur.execute(
+                "INSERT INTO provenance "
+                "(debate_id, claim, agent, action, source_paper_id, detail) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (str(debate_id), claim, "guardrail", "quarantine", None,
+                 json.dumps({"rules": advocate_rules, "stage": "advocate_output"})),
+            )
         for challenge in critique["challenges"]:
             cur.execute(
                 "INSERT INTO provenance "
@@ -91,7 +102,7 @@ async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: di
                     "skeptic",
                     "critique",
                     challenge.get("target_pmid"),
-                    json.dumps({"issue": challenge["issue"]}),
+                    json.dumps(provenance_payload({"issue": challenge["issue"]}, MODEL)),
                     version,
                 ),
             )
@@ -106,10 +117,10 @@ async def skeptic(conn: psycopg.Connection, debate_id: UUID, advocate_result: di
                 "assess",
                 None,
                 json.dumps(
-                    {
+                    provenance_payload({
                         "uncertainty_notes": critique["uncertainty_notes"],
                         "overall_assessment": critique["overall_assessment"],
-                    }
+                    }, MODEL)
                 ),
                 version,
             ),

@@ -1,19 +1,23 @@
 """Batch processing endpoints for evaluation and scaling."""
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
 import time
 
+from app.auth import require_admin
 from app.claims import get_all_claims, EvalClaim
+from app.schemas import Claim
 from app.main import run_debate_pipeline, run_synthesis_pipeline, background_debate, job_store
 
-router = APIRouter(prefix="/batch", tags=["batch"])
+# Admin-only as a whole: a 50-claim batch is bulk LLM spend, and the eval run drives the
+# frozen multi-agent pipeline. Loosen per route once rate limits / budgets exist.
+router = APIRouter(prefix="/batch", tags=["batch"], dependencies=[Depends(require_admin)])
 
 
 class BatchRequest(BaseModel):
-    claims: list[str]
+    claims: list[Claim]
     async_mode: bool = True
 
 

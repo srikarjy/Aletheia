@@ -26,6 +26,10 @@ services:
       BIOLAB_DB_PATH: /workspace/biolab-mcp-server/biolab.db
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ALETHEIA_MODEL: ${ALETHEIA_MODEL:-claude-sonnet-4-5}
       MOCK_RETRIEVAL: "true"
       MOCK_EMBEDDINGS: "true"
       MOCK_LLM: "true"

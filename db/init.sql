@@ -35,3 +35,45 @@ CREATE TABLE provenance (
     timestamp       TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX provenance_debate_id_idx ON provenance (debate_id);
+
+-- Runtime infrastructure: a durable L2 response cache, restart-safe async job
+-- metadata, and user-facing research memory. The API keeps a bounded TTL L1
+-- cache in-process and treats these tables as the durable source of truth.
+CREATE TABLE response_cache (
+    cache_key    TEXT PRIMARY KEY,
+    payload      JSONB NOT NULL,
+    expires_at   TIMESTAMPTZ NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX response_cache_expiry_idx ON response_cache (expires_at);
+
+CREATE TABLE async_jobs (
+    job_id       UUID PRIMARY KEY,
+    status       TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    claim        TEXT NOT NULL,
+    multi_agent  BOOLEAN NOT NULL DEFAULT false,
+    debate_id    UUID,
+    result       JSONB,
+    error        TEXT,
+    created_at   DOUBLE PRECISION NOT NULL,
+    started_at   DOUBLE PRECISION,
+    completed_at DOUBLE PRECISION,
+    owner_sub    TEXT  -- Phase 10b: NULL = predates ownership (admin-only)
+);
+CREATE INDEX async_jobs_created_idx ON async_jobs (created_at DESC);
+
+CREATE TABLE research_memory (
+    debate_id   UUID PRIMARY KEY,
+    claim       TEXT NOT NULL,
+    verdict     TEXT NOT NULL,
+    confidence  DOUBLE PRECISION NOT NULL,
+    pipeline    TEXT NOT NULL,
+    from_cache  BOOLEAN NOT NULL DEFAULT false,
+    response    JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    owner_sub   TEXT  -- Phase 10b: NULL = predates ownership (admin-only)
+);
+CREATE INDEX research_memory_created_idx ON research_memory (created_at DESC);
+CREATE INDEX async_jobs_owner_idx ON async_jobs (owner_sub, created_at DESC);
+CREATE INDEX research_memory_owner_idx ON research_memory (owner_sub, created_at DESC);

@@ -1,3 +1,13 @@
+---
+title: Aletheia
+emoji: "⚗️"
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Aletheia
 
 > *"I designed a system where AI doesn't just answer — it argues with itself, shows its work, and cites its sources."*
@@ -184,6 +194,31 @@ The thesis of Aletheia is that debate reduces unsupported claims vs a single-mod
 - Confidence bar with verdict badge
 - Example claims pre-loaded
 - Copy-to-clipboard for sharing results
+- Async progress UI with a fast synthesis / full debate mode switch
+- Durable research memory for reopening prior analyses
+- Runtime control-plane view for API, cache, persistence, and LLM provider status
+
+### LLM provider gateway
+
+Agent code is provider-neutral. Anthropic remains the default, while DeepSeek and
+Qwen/DashScope can be selected as lower-cost OpenAI-compatible providers:
+
+```bash
+# DeepSeek
+LLM_PROVIDER=deepseek
+ALETHEIA_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=...
+
+# Qwen through DashScope
+LLM_PROVIDER=qwen
+ALETHEIA_MODEL=qwen-plus
+DASHSCOPE_API_KEY=...
+```
+
+`LLM_PROVIDER=openai_compatible`, `LLM_BASE_URL`, `LLM_API_KEY`, and
+`ALETHEIA_MODEL` can target another compatible service. Provider and model metadata
+are saved in the provenance artifact for each LLM action. See
+`docs/ADR-001-runtime-state-and-llm-gateway.md` for the trade-offs.
 
 ---
 
@@ -392,5 +427,6 @@ Aletheia/
 ---
 
 ## License
+
 
 MIT

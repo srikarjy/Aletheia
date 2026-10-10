@@ -1,4 +1,4 @@
-"""Shared helper for forced-tool-use Claude calls with configurable max_tokens and auto-retry.
+"""Provider-neutral structured LLM gateway with bounded retries.
 
 Centralizes a real bug found in Phase 3: a truncated tool_use response (Claude hit
 max_tokens mid-generation) isn't an API error — stop_reason is just "max_tokens", and
@@ -8,7 +8,8 @@ clear one at the source. This raises loudly right where the truncation happened.
 
 Now with configurable max_tokens and automatic retry with increased tokens on truncation.
 
-Supports MOCK_LLM=true for demo/deployment without Anthropic dependency.
+Supports Anthropic's native tool API plus OpenAI-compatible providers such as
+DeepSeek and Qwen. Agent code calls one stable function regardless of provider.
 """
 
 import json
@@ -17,15 +18,44 @@ import random
 import threading
 
 from anthropic import Anthropic
+from openai import OpenAI
+
+from app import budget
 
 
 DEFAULT_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "2048"))
 MAX_TOKENS_RETRY_INCREMENT = int(os.environ.get("CLAUDE_MAX_TOKENS_RETRY_INCREMENT", "1024"))
 MAX_TOKENS_LIMIT = int(os.environ.get("CLAUDE_MAX_TOKENS_LIMIT", "8192"))
 
-_client: Anthropic | None = None
-if os.environ.get("MOCK_LLM", "").lower() != "true":
-    _client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+
+
+def _build_client() -> Anthropic | OpenAI | None:
+    if os.environ.get("MOCK_LLM", "").lower() == "true":
+        return None
+    if LLM_PROVIDER == "anthropic":
+        return Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    if LLM_PROVIDER == "deepseek":
+        return OpenAI(
+            api_key=os.environ.get("DEEPSEEK_API_KEY"),
+            base_url=os.environ.get("LLM_BASE_URL", "https://api.deepseek.com"),
+        )
+    if LLM_PROVIDER in {"qwen", "dashscope"}:
+        return OpenAI(
+            api_key=os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("QWEN_API_KEY"),
+            base_url=os.environ.get(
+                "LLM_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            ),
+        )
+    if LLM_PROVIDER == "openai_compatible":
+        return OpenAI(
+            api_key=os.environ.get("LLM_API_KEY"),
+            base_url=os.environ.get("LLM_BASE_URL"),
+        )
+    raise ValueError(f"Unsupported LLM_PROVIDER: {LLM_PROVIDER}")
+
+
+_client: Anthropic | OpenAI | None = _build_client()
 
 # $/1M tokens. claude-sonnet-4-5 isn't in Anthropic's current pricing page (superseded
 # by claude-sonnet-5) — this is the last publicly documented Sonnet-4.x rate, not a
@@ -42,11 +72,30 @@ _cost_lock = threading.Lock()
 _cost_tracker = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0}
 
 
+def get_runtime_config() -> dict[str, str]:
+    return {
+        "provider": "mock" if _client is None else LLM_PROVIDER,
+        "model": os.environ.get("ALETHEIA_MODEL", "claude-sonnet-4-5"),
+    }
+
+
+def provenance_payload(payload: dict, model: str | None = None) -> dict:
+    """Decorate only persisted artifacts, keeping the public call_tool contract stable."""
+    return {
+        **payload,
+        "_runtime": {
+            "provider": "mock" if _client is None else LLM_PROVIDER,
+            "model": model or os.environ.get("ALETHEIA_MODEL", "claude-sonnet-4-5"),
+        },
+    }
+
+
 def _record_usage(model: str, input_tokens: int, output_tokens: int) -> None:
     rates = PRICING_PER_MILLION_TOKENS.get(model)
     cost = 0.0
     if rates is not None:
         cost = (input_tokens / 1_000_000) * rates["input"] + (output_tokens / 1_000_000) * rates["output"]
+    budget.charge(input_tokens, output_tokens, cost)
     with _cost_lock:
         _cost_tracker["input_tokens"] += input_tokens
         _cost_tracker["output_tokens"] += output_tokens
@@ -136,6 +185,12 @@ def _mock_tool_response(tool_name: str, prompt: str) -> dict:
             "verdict": "unresolved",
             "confidence": 0.5,
             "confidence_rationale": "Anchor B applies: the retrieved evidence genuinely conflicts on the central claim. PMID 38765432's adjusted RR (1.34, CI 0.87-2.06) and PMID 37123456's adjusted HR (0.89, CI 0.45-1.76) both have confidence intervals wide enough to be compatible with a real effect, not a true null — this is imprecision, not evidence of absence. PMID 35987654's familial enrichment (p=0.003) is a positive signal the null findings don't explain away. Neither the positive nor the null evidence can be dismissed as invalid, so this is a genuine unresolved conflict, not a case for anchor C or D.",
+            "signal_breakdown": {
+                "literature": 0.5,
+                "protein_evidence": 0.0,
+                "clinical_evidence": 0.4,
+                "llm_rating": 0.5,
+            },
             "cited_pmids": ["38765432", "35987654", "37123456"]
         }
     else:
@@ -143,7 +198,7 @@ def _mock_tool_response(tool_name: str, prompt: str) -> dict:
 
 
 def call_tool(
-    client: Anthropic | None,
+    client: Anthropic | OpenAI | None,
     model: str,
     max_tokens: int | None = None,
     tool: dict | None = None,
@@ -183,9 +238,42 @@ def call_tool(
     else:
         raise ValueError("Must provide either (tool, prompt) or (tool_name, tool_schema, prompt)")
     
+    # Per-run budget (app/budget.py): refuse the call if the run's cap is already reached.
+    budget.begin_call()
+
     # Mock mode
     if client is None:
         return _mock_tool_response(_tool_name, _prompt)
+
+    configured_model = os.environ.get("ALETHEIA_MODEL") or model
+
+    # DeepSeek, Qwen, and other OpenAI-compatible services expose JSON mode but
+    # not Anthropic's forced-tool blocks. Put the exact schema in the prompt and
+    # return the same dict contract expected by every existing agent.
+    if isinstance(client, OpenAI):
+        schema_prompt = (
+            f"{_prompt}\n\nReturn only a JSON object for `{_tool_name}` matching this "
+            f"JSON Schema exactly:\n{json.dumps(_tool_schema, separators=(',', ':'))}"
+        )
+        response = client.chat.completions.create(
+            model=configured_model,
+            max_tokens=_max_tokens,
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": schema_prompt}],
+        )
+        usage = response.usage
+        _record_usage(
+            configured_model,
+            getattr(usage, "prompt_tokens", 0) if usage else 0,
+            getattr(usage, "completion_tokens", 0) if usage else 0,
+        )
+        content = response.choices[0].message.content or "{}"
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"{LLM_PROVIDER} returned invalid JSON for {_tool_name}: {exc}"
+            ) from exc
 
     # Bounded independently of MAX_TOKENS_LIMIT: if MAX_TOKENS_RETRY_INCREMENT is ever
     # misconfigured to <=0, clamping it to 1 alone would still allow thousands of retries
@@ -195,14 +283,16 @@ def call_tool(
     max_attempts = max(1, min(token_bound_attempts, HARD_MAX_ATTEMPTS))
 
     for attempt in range(max_attempts):
+        if attempt:
+            budget.check()  # a truncation retry is another paid request
         response = client.messages.create(
-            model=model,
+            model=configured_model,
             max_tokens=_max_tokens,
             tools=[{"name": _tool_name, "input_schema": _tool_schema}],
             tool_choice={"type": "tool", "name": _tool_name},
             messages=[{"role": "user", "content": _prompt}],
         )
-        _record_usage(model, response.usage.input_tokens, response.usage.output_tokens)
+        _record_usage(configured_model, response.usage.input_tokens, response.usage.output_tokens)
         if response.stop_reason == "max_tokens":
             if not retry_on_truncation:
                 raise RuntimeError(

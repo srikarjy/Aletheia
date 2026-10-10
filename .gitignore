@@ -17,3 +17,7 @@ eval_results/
 # Populated at deploy time from the sibling Biolab checkout, see biolab_vendor/README.md
 biolab_vendor/*
 !biolab_vendor/README.md
+
+# Auth key material: the private key must never be committed (see scripts/mint_token.py)
+.auth/
+*.pem
